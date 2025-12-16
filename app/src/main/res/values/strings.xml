@@ -1,0 +1,5 @@
+﻿<resources>
+  <string name="app_name">ETH Trend Scout</string>
+  <string name="notif_channel_name">Trend Alerts</string>
+  <string name="notif_channel_desc">Notifications when trend changes to LONG/SHORT</string>
+</resources>

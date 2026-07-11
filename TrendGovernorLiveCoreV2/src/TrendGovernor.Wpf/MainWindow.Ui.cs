@@ -10,12 +10,15 @@ public sealed partial class MainWindow : Window
     private readonly BinanceClient _binance = new();
     private readonly CancellationTokenSource _cts = new();
 
-    private readonly DataGrid _overviewMarketGrid = GridFor<MarketRow>();
-    private readonly DataGrid _radarMarketGrid = GridFor<MarketRow>();
-    private readonly DataGrid _overviewPositionGrid = GridFor<PositionRow>();
-    private readonly DataGrid _positionsGrid = GridFor<PositionRow>();
-    private readonly DataGrid _overviewOrderGrid = GridFor<OrderRow>();
-    private readonly DataGrid _ordersGrid = GridFor<OrderRow>();
+    // Control chính của Tổng quan - giữ tên cũ để không phá logic hiện có.
+    private readonly DataGrid _marketGrid = GridFor<MarketRow>();
+    private readonly DataGrid _positionGrid = GridFor<PositionRow>();
+    private readonly DataGrid _orderGrid = GridFor<OrderRow>();
+
+    // Control riêng cho từng tab, tuyệt đối không gắn một UIElement vào hai parent.
+    private readonly DataGrid _radarGrid = GridFor<MarketRow>();
+    private readonly DataGrid _positionsTabGrid = GridFor<PositionRow>();
+    private readonly DataGrid _ordersTabGrid = GridFor<OrderRow>();
 
     private readonly TextBlock _status = Text("ĐANG KHỞI ĐỘNG", 14, Brushes.Gold);
     private readonly TextBlock _account = Text("TÀI KHOẢN: CHƯA KẾT NỐI", 14, Brushes.LightGray);
@@ -41,7 +44,6 @@ public sealed partial class MainWindow : Window
 
     private bool _liveArmed;
     private MarketRow? _selected;
-    private bool _syncingSelection;
 
     public MainWindow()
     {
@@ -52,6 +54,17 @@ public sealed partial class MainWindow : Window
         MinHeight = 760;
         Background = Brush("#06101C");
         Foreground = Brushes.White;
+
+        // Các tab phụ đọc cùng State Store nhưng dùng DataGrid riêng.
+        _radarGrid.ItemsSource = _state.Markets;
+        _positionsTabGrid.ItemsSource = _state.Positions;
+        _ordersTabGrid.ItemsSource = _state.Orders;
+        _radarGrid.SelectionChanged += (_, _) =>
+        {
+            if (_radarGrid.SelectedItem is MarketRow row)
+                _marketGrid.SelectedItem = row;
+        };
+
         Content = BuildRoot();
         Loaded += OnLoaded;
         Closed += (_, _) => _cts.Cancel();
@@ -82,12 +95,10 @@ public sealed partial class MainWindow : Window
         var grid = new Grid { Height = 68, Background = Brush("#081525"), Margin = new Thickness(0, 0, 0, 2) };
         grid.ColumnDefinitions.Add(new ColumnDefinition());
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
         var title = Text("TRENDGOVERNOR LIVE CORE V2", 24, Brushes.White);
         title.FontWeight = FontWeights.Bold;
         title.Margin = new Thickness(18, 18, 0, 0);
         grid.Children.Add(title);
-
         var right = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 14, 18, 0) };
         right.Children.Add(_status);
         right.Children.Add(Button("LÀM MỚI", Brushes.RoyalBlue, (_, _) => _ = RefreshAllAsync()));
@@ -103,8 +114,7 @@ public sealed partial class MainWindow : Window
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(2, GridUnitType.Star) });
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-
-        grid.Children.Add(Card("RADAR - TOP CƠ HỘI", _overviewMarketGrid));
+        grid.Children.Add(Card("RADAR - TOP CƠ HỘI", _marketGrid));
 
         var right = new StackPanel();
         right.Children.Add(Card("QUYẾT ĐỊNH", _decision));
@@ -113,11 +123,10 @@ public sealed partial class MainWindow : Window
         Grid.SetColumn(right, 1);
         grid.Children.Add(right);
 
-        var positions = Card("VỊ THẾ ĐANG MỞ", _overviewPositionGrid);
+        var positions = Card("VỊ THẾ ĐANG MỞ", _positionGrid);
         Grid.SetRow(positions, 1);
         grid.Children.Add(positions);
-
-        var orders = Card("LỆNH / SL / TP", _overviewOrderGrid);
+        var orders = Card("LỆNH / SL / TP", _orderGrid);
         Grid.SetRow(orders, 1);
         Grid.SetColumn(orders, 1);
         grid.Children.Add(orders);
@@ -129,15 +138,13 @@ public sealed partial class MainWindow : Window
         var grid = new Grid { Margin = new Thickness(12) };
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         grid.RowDefinitions.Add(new RowDefinition());
-
         var actions = new StackPanel { Orientation = Orientation.Horizontal };
         actions.Children.Add(Button("QUÉT RADAR", Brushes.RoyalBlue, (_, _) => _ = ScanAsync()));
         actions.Children.Add(_executeButton);
         _executeButton.Click += async (_, _) => await ExecuteSelectedAsync();
         grid.Children.Add(actions);
-
-        Grid.SetRow(_radarMarketGrid, 1);
-        grid.Children.Add(_radarMarketGrid);
+        Grid.SetRow(_radarGrid, 1);
+        grid.Children.Add(_radarGrid);
         return grid;
     }
 
@@ -146,8 +153,8 @@ public sealed partial class MainWindow : Window
         var grid = new Grid { Margin = new Thickness(12) };
         grid.RowDefinitions.Add(new RowDefinition());
         grid.RowDefinitions.Add(new RowDefinition());
-        grid.Children.Add(Card("VỊ THẾ BINANCE", _positionsGrid));
-        var orders = Card("LỆNH ĐANG MỞ", _ordersGrid);
+        grid.Children.Add(Card("VỊ THẾ BINANCE", _positionsTabGrid));
+        var orders = Card("LỆNH ĐANG MỞ", _ordersTabGrid);
         Grid.SetRow(orders, 1);
         grid.Children.Add(orders);
         return grid;
@@ -175,16 +182,13 @@ public sealed partial class MainWindow : Window
         return panel;
     }
 
-    private UIElement StatusBar()
+    private UIElement StatusBar() => new Border
     {
-        return new Border
-        {
-            Background = Brush("#081525"),
-            Height = 30,
-            Padding = new Thickness(12, 6, 12, 0),
-            Child = Text("PLAN → VERIFY → EXECUTE → FILL → PROTECT → MANAGE", 12, Brushes.LightSkyBlue)
-        };
-    }
+        Background = Brush("#081525"),
+        Height = 30,
+        Padding = new Thickness(12, 6, 12, 0),
+        Child = Text("PLAN → VERIFY → EXECUTE → FILL → PROTECT → MANAGE", 12, Brushes.LightSkyBlue)
+    };
 
     private static TabItem Tab(string header, UIElement body) => new() { Header = header, Content = body };
 

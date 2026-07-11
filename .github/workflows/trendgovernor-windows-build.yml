@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [ main ]
     paths:
-      - '.tgpayload/**'
+      - 'TrendGovernorLiveCoreV2/**'
       - '.github/workflows/trendgovernor-windows-build.yml'
   workflow_dispatch:
 
@@ -15,51 +15,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Restore source payload
-        id: restore_payload
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $diag = @()
-          try {
-            $text = Get-Content '.tgpayload/core.tar.xz.b64' -Raw
-            $diag += "base64_chars=$($text.Length)"
-            $raw = [Convert]::FromBase64String($text)
-            $diag += "decoded_bytes=$($raw.Length)"
-            [IO.File]::WriteAllBytes('core.tar.xz', $raw)
-            $hash = (Get-FileHash 'core.tar.xz' -Algorithm SHA256).Hash
-            $diag += "sha256=$hash"
-            New-Item -ItemType Directory -Path 'TrendGovernorLiveCoreV2' -Force | Out-Null
-            tar.exe -xJf core.tar.xz -C TrendGovernorLiveCoreV2
-            $diag += "tar_exit=$LASTEXITCODE"
-            $project = 'TrendGovernorLiveCoreV2/src/TrendGovernor.Wpf/TrendGovernor.Wpf.csproj'
-            $diag += "project_exists=$(Test-Path $project)"
-            if (-not (Test-Path $project)) { throw 'WPF project not found after payload extraction.' }
-            $diag += 'restore_payload=PASS'
-          } catch {
-            $diag += "restore_payload=FAIL"
-            $diag += "error=$($_.Exception.Message)"
-            $diag += "stack=$($_.ScriptStackTrace)"
-            $diag | Set-Content restore-diagnostic.txt
-            throw
-          }
-          $diag | Set-Content restore-diagnostic.txt
-
-      - name: Upload restore diagnostic
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: restore-diagnostic
-          path: restore-diagnostic.txt
-          if-no-files-found: warn
-          retention-days: 3
-
-      - name: Stop if payload restore failed
-        if: steps.restore_payload.outcome != 'success'
-        shell: pwsh
-        run: throw 'Payload restore failed. See restore-diagnostic artifact.'
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
@@ -74,11 +29,11 @@ jobs:
         shell: pwsh
         run: dotnet build 'TrendGovernorLiveCoreV2/src/TrendGovernor.Wpf/TrendGovernor.Wpf.csproj' -c Release -r win-x64 --no-restore
 
-      - name: Publish single-file Windows x64
+      - name: Publish Windows x64
         shell: pwsh
         run: dotnet publish 'TrendGovernorLiveCoreV2/src/TrendGovernor.Wpf/TrendGovernor.Wpf.csproj' -c Release -r win-x64 --self-contained true --no-restore -o 'TrendGovernorLiveCoreV2/release' /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true
 
-      - name: Verify artifact
+      - name: Verify executable
         shell: pwsh
         run: |
           $exe = 'TrendGovernorLiveCoreV2/release/TrendGovernor.Wpf.exe'
@@ -90,7 +45,6 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item 'TrendGovernorLiveCoreV2/START_TOOL.cmd' 'TrendGovernorLiveCoreV2/release/START_TOOL.cmd' -Force
-          Copy-Item 'TrendGovernorLiveCoreV2/config' 'TrendGovernorLiveCoreV2/release/config' -Recurse -Force
           Compress-Archive -Path 'TrendGovernorLiveCoreV2/release/*' -DestinationPath 'TRENDGOVERNOR_WINDOWS_X64_BUILD_04.zip' -Force
 
       - name: Upload Windows release

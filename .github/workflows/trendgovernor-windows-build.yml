@@ -17,10 +17,49 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Restore source payload
+        id: restore_payload
+        continue-on-error: true
         shell: pwsh
         run: |
-          python -c "import base64,tarfile,pathlib; p=pathlib.Path('.tgpayload/core.tar.xz.b64'); raw=base64.b64decode(p.read_text()); pathlib.Path('core.tar.xz').write_bytes(raw); pathlib.Path('TrendGovernorLiveCoreV2').mkdir(exist_ok=True); tarfile.open('core.tar.xz','r:xz').extractall('TrendGovernorLiveCoreV2')"
-          if (-not (Test-Path 'TrendGovernorLiveCoreV2/src/TrendGovernor.Wpf/TrendGovernor.Wpf.csproj')) { throw 'WPF project not found after payload extraction.' }
+          $ErrorActionPreference = 'Stop'
+          $diag = @()
+          try {
+            $text = Get-Content '.tgpayload/core.tar.xz.b64' -Raw
+            $diag += "base64_chars=$($text.Length)"
+            $raw = [Convert]::FromBase64String($text)
+            $diag += "decoded_bytes=$($raw.Length)"
+            [IO.File]::WriteAllBytes('core.tar.xz', $raw)
+            $hash = (Get-FileHash 'core.tar.xz' -Algorithm SHA256).Hash
+            $diag += "sha256=$hash"
+            New-Item -ItemType Directory -Path 'TrendGovernorLiveCoreV2' -Force | Out-Null
+            tar.exe -xJf core.tar.xz -C TrendGovernorLiveCoreV2
+            $diag += "tar_exit=$LASTEXITCODE"
+            $project = 'TrendGovernorLiveCoreV2/src/TrendGovernor.Wpf/TrendGovernor.Wpf.csproj'
+            $diag += "project_exists=$(Test-Path $project)"
+            if (-not (Test-Path $project)) { throw 'WPF project not found after payload extraction.' }
+            $diag += 'restore_payload=PASS'
+          } catch {
+            $diag += "restore_payload=FAIL"
+            $diag += "error=$($_.Exception.Message)"
+            $diag += "stack=$($_.ScriptStackTrace)"
+            $diag | Set-Content restore-diagnostic.txt
+            throw
+          }
+          $diag | Set-Content restore-diagnostic.txt
+
+      - name: Upload restore diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-diagnostic
+          path: restore-diagnostic.txt
+          if-no-files-found: warn
+          retention-days: 3
+
+      - name: Stop if payload restore failed
+        if: steps.restore_payload.outcome != 'success'
+        shell: pwsh
+        run: throw 'Payload restore failed. See restore-diagnostic artifact.'
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4

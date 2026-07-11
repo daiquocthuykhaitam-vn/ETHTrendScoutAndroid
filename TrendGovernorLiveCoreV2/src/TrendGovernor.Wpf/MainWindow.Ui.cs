@@ -24,19 +24,25 @@ public sealed partial class MainWindow : Window
     private readonly TextBlock _account = T("CHƯA KẾT NỐI API", 13, Brushes.LightGray);
     private readonly TextBlock _decision = T("WAIT", 28, Brushes.Gold, true);
     private readonly TextBlock _plan = T("CHƯA CÓ KẾ HOẠCH", 13, Brushes.LightGray);
+    private readonly TextBlock _riskSummary = T("Chưa có dữ liệu tài khoản.", 13, Brushes.LightGray);
     private readonly TextBlock _marketCount = T("0", 22, Brushes.White, true);
     private readonly TextBlock _candidateCount = T("0", 22, Brushes.Gold, true);
-    private readonly TextBlock _selectedSymbol = T("--", 22, Brushes.White, true);
     private readonly TextBlock _positionCount = T("0", 22, Brushes.White, true);
-    private readonly TextBlock _orderCount = T("0", 22, Brushes.White, true);
     private readonly TextBlock _equityMetric = T("-- USDT", 22, Brushes.White, true);
     private readonly TextBlock _dailyPnlMetric = T("-- USDT", 22, Brushes.LightGreen, true);
     private readonly TextBlock _sessionRiskMetric = T("0.00%", 22, Brushes.Gold, true);
     private readonly TextBlock _chartTitle = T("CHƯA CHỌN CẶP", 13, Brushes.White, true);
-    private readonly TextBlock _riskSummary = T("Chưa có dữ liệu tài khoản.", 13, Brushes.LightGray);
+
+    private readonly TextBlock _decisionFull = T("WAIT", 32, Brushes.Gold, true);
+    private readonly TextBlock _planFull = T("CHƯA CÓ KẾ HOẠCH", 14, Brushes.LightGray);
+    private readonly TextBlock _riskSummaryFull = T("Chưa có dữ liệu tài khoản.", 14, Brushes.LightGray);
+    private readonly TextBlock _accountFull = T("CHƯA KẾT NỐI API", 14, Brushes.LightGray);
+    private readonly TextBlock _statusFull = T("ĐANG KHỞI ĐỘNG", 18, Brushes.Gold, true);
+    private readonly TextBlock _chartTitleFull = T("CHƯA CHỌN CẶP", 14, Brushes.White, true);
 
     private readonly Canvas _chartCanvas = new() { Background = B("#071421"), MinHeight = 320, ClipToBounds = true };
-    private readonly Canvas _equityCanvas = new() { Background = B("#071421"), MinHeight = 155, ClipToBounds = true };
+    private readonly Canvas _chartCanvasFull = new() { Background = B("#071421"), MinHeight = 600, ClipToBounds = true };
+    private readonly Canvas _equityCanvasFull = new() { Background = B("#071421"), MinHeight = 300, ClipToBounds = true };
 
     private readonly TextBox _apiKey = Input();
     private readonly PasswordBox _apiSecret = new() { Height = 34, Background = B("#0C1B2B"), Foreground = Brushes.White, BorderBrush = B("#284762"), Padding = new Thickness(8), Margin = new Thickness(0, 4, 0, 12) };
@@ -47,7 +53,10 @@ public sealed partial class MainWindow : Window
     private readonly TextBox _logs = LogBox();
     private readonly TextBox _logPreview = LogBox();
     private readonly TextBox _alerts = LogBox();
+    private readonly TextBox _alertsFull = LogBox();
     private readonly TextBox _recentTrades = LogBox();
+    private readonly TextBox _recentTradesFull = LogBox();
+    private readonly TextBox _performanceLog = LogBox();
 
     private bool _liveArmed;
     private MarketRow? _selected;
@@ -86,12 +95,12 @@ public sealed partial class MainWindow : Window
         tabs.Resources.Add(typeof(TabItem), TabStyle());
         tabs.Items.Add(Tab("TỔNG QUAN", "▦", Overview()));
         tabs.Items.Add(Tab("RADAR", "◎", Radar()));
-        tabs.Items.Add(Tab("BIỂU ĐỒ", "⌁", ChartWorkspace()));
-        tabs.Items.Add(Tab("KẾ HOẠCH", "◆", DecisionWorkspace()));
+        tabs.Items.Add(Tab("BIỂU ĐỒ", "⌁", FullChartWorkspace()));
+        tabs.Items.Add(Tab("KẾ HOẠCH", "◆", FullDecisionWorkspace()));
         tabs.Items.Add(Tab("VỊ THẾ", "◈", Positions()));
-        tabs.Items.Add(Tab("RỦI RO", "⬡", RiskWorkspace()));
+        tabs.Items.Add(Tab("RỦI RO", "⬡", FullRiskWorkspace()));
         tabs.Items.Add(Tab("HIỆU SUẤT", "↗", PerformanceWorkspace()));
-        tabs.Items.Add(Tab("CẢNH BÁO", "△", AlertsWorkspace()));
+        tabs.Items.Add(Tab("CẢNH BÁO", "△", Card("CẢNH BÁO HỆ THỐNG / THỊ TRƯỜNG / VỊ THẾ", _alertsFull)));
         tabs.Items.Add(Tab("API & LIVE", "⚙", Api()));
         tabs.Items.Add(Tab("NHẬT KÝ", "≡", Card("NHẬT KÝ HỆ THỐNG / EXECUTION / PROTECTION", _logs)));
         root.Children.Add(tabs);
@@ -103,22 +112,18 @@ public sealed partial class MainWindow : Window
         var grid = new Grid { Height = 76, Background = B("#071421") };
         grid.ColumnDefinitions.Add(new ColumnDefinition());
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
         var left = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(18, 10, 0, 8) };
         left.Children.Add(T("◆", 24, B("#F4B942"), true));
         var names = new StackPanel();
         names.Children.Add(T("TRENDGOVERNOR LIVE CORE V2", 22, Brushes.White, true));
         names.Children.Add(T("PLAN → VERIFY → EXECUTE → FILL → PROTECT → MANAGE", 11, B("#6E8BA8")));
-        left.Children.Add(names);
-        grid.Children.Add(left);
-
+        left.Children.Add(names); grid.Children.Add(left);
         var right = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 16, 0) };
         right.Children.Add(Pill("BINANCE FUTURES USD-M", "#15324A", Brushes.LightSkyBlue));
         right.Children.Add(Pill("WS + REST", "#153B2B", B("#66D49A")));
         right.Children.Add(_status);
         right.Children.Add(Btn("LÀM MỚI", "#245EDB", (_, _) => _ = RefreshAllAsync()));
-        Grid.SetColumn(right, 1);
-        grid.Children.Add(right);
+        Grid.SetColumn(right, 1); grid.Children.Add(right);
         return grid;
     }
 
@@ -127,46 +132,38 @@ public sealed partial class MainWindow : Window
         var root = new Grid { Margin = new Thickness(8) };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(3.2, GridUnitType.Star) });
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(2.2, GridUnitType.Star) });
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1.55, GridUnitType.Star) });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(2.0, GridUnitType.Star) });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1.5, GridUnitType.Star) });
 
         var metrics = new Grid();
         for (var i = 0; i < 6; i++) metrics.ColumnDefinitions.Add(new ColumnDefinition());
         Metric(metrics, 0, "TỔNG TÀI SẢN", _equityMetric, "Tài khoản Futures");
         Metric(metrics, 1, "PNL ĐANG MỞ", _dailyPnlMetric, "Không dựng số liệu giả");
-        Metric(metrics, 2, "VỊ THẾ / LỆNH", _positionCount, "Vị thế đang mở");
+        Metric(metrics, 2, "VỊ THẾ", _positionCount, "Đang mở trên Binance");
         Metric(metrics, 3, "RỦI RO PHIÊN", _sessionRiskMetric, "Exposure / equity");
         Metric(metrics, 4, "ỨNG VIÊN", _candidateCount, "Đủ điều kiện hiện tại");
         Metric(metrics, 5, "SỨC KHỎE HỆ THỐNG", _statusMetric, "Dữ liệu + radar + tài khoản");
         root.Children.Add(metrics);
 
         var center = new Grid();
-        center.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.05, GridUnitType.Star) });
-        center.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.55, GridUnitType.Star) });
-        center.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(.78, GridUnitType.Star) });
+        center.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.02, GridUnitType.Star) });
+        center.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.6, GridUnitType.Star) });
+        center.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(.8, GridUnitType.Star) });
         center.Children.Add(Card("RADAR — TOP CƠ HỘI", _marketGrid));
-        var chartCard = Card("BIỂU ĐỒ NẾN 1H — GIÁ / EMA / ENTRY / SL / TP", ChartPanel());
-        Grid.SetColumn(chartCard, 1); center.Children.Add(chartCard);
-        var side = new StackPanel();
-        side.Children.Add(Card("QUYẾT ĐỊNH", _decision));
-        side.Children.Add(Card("KẾ HOẠCH VÀO", _plan));
-        side.Children.Add(Card("THAO TÁC NHANH", QuickActions()));
-        Grid.SetColumn(side, 2); center.Children.Add(side);
+        var chart = Card("BIỂU ĐỒ NẾN 1H — EMA / ENTRY / SL / TP", ChartPanel(_chartTitle, _chartCanvas)); Grid.SetColumn(chart, 1); center.Children.Add(chart);
+        var side = new StackPanel(); side.Children.Add(Card("QUYẾT ĐỊNH", _decision)); side.Children.Add(Card("KẾ HOẠCH VÀO", _plan)); side.Children.Add(Card("THAO TÁC NHANH", QuickActions())); Grid.SetColumn(side, 2); center.Children.Add(side);
         Grid.SetRow(center, 1); root.Children.Add(center);
 
         var middle = new Grid();
-        middle.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.25, GridUnitType.Star) });
-        middle.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(.95, GridUnitType.Star) });
-        middle.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(.95, GridUnitType.Star) });
+        middle.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.2, GridUnitType.Star) });
+        middle.ColumnDefinitions.Add(new ColumnDefinition());
+        middle.ColumnDefinitions.Add(new ColumnDefinition());
         middle.Children.Add(Card("VỊ THẾ ĐANG MỞ", _positionGrid));
         var orders = Card("LỆNH / SL / TP", _orderGrid); Grid.SetColumn(orders, 1); middle.Children.Add(orders);
         var risk = Card("RỦI RO HIỆN TẠI", _riskSummary); Grid.SetColumn(risk, 2); middle.Children.Add(risk);
         Grid.SetRow(middle, 2); root.Children.Add(middle);
 
-        var bottom = new Grid();
-        bottom.ColumnDefinitions.Add(new ColumnDefinition());
-        bottom.ColumnDefinitions.Add(new ColumnDefinition());
-        bottom.ColumnDefinitions.Add(new ColumnDefinition());
+        var bottom = new Grid(); bottom.ColumnDefinitions.Add(new ColumnDefinition()); bottom.ColumnDefinitions.Add(new ColumnDefinition()); bottom.ColumnDefinitions.Add(new ColumnDefinition());
         bottom.Children.Add(Card("CẢNH BÁO", _alerts));
         var trades = Card("GIAO DỊCH GẦN ĐÂY", _recentTrades); Grid.SetColumn(trades, 1); bottom.Children.Add(trades);
         var logs = Card("NHẬT KÝ HỆ THỐNG", _logPreview); Grid.SetColumn(logs, 2); bottom.Children.Add(logs);
@@ -174,168 +171,88 @@ public sealed partial class MainWindow : Window
         return root;
     }
 
-    private UIElement ChartPanel()
-    {
-        var panel = new DockPanel();
-        var head = new Grid { Height = 32 };
-        head.ColumnDefinitions.Add(new ColumnDefinition());
-        head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        head.Children.Add(_chartTitle);
-        var tf = T("5m   15m   1H   4H", 11, B("#6E8BA8"), true); Grid.SetColumn(tf, 1); head.Children.Add(tf);
-        DockPanel.SetDock(head, Dock.Top); panel.Children.Add(head);
-        panel.Children.Add(_chartCanvas);
-        return panel;
-    }
-
     private UIElement Radar()
     {
         var grid = new Grid { Margin = new Thickness(10) };
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        grid.RowDefinitions.Add(new RowDefinition());
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); grid.RowDefinitions.Add(new RowDefinition());
         var actions = new StackPanel { Orientation = Orientation.Horizontal };
         actions.Children.Add(Btn("QUÉT RADAR", "#245EDB", (_, _) => _ = ScanAsync()));
         actions.Children.Add(Btn("GỬI LỆNH ĐÃ CHỌN", "#B66A00", async (_, _) => await ExecuteSelectedAsync()));
         actions.Children.Add(Pill("KHÔNG ĐUỔI GIÁ", "#153B2B", B("#5ED99C")));
         actions.Children.Add(Pill("KHÔNG MUA ĐỈNH / BÁN ĐÁY", "#3A2C12", B("#F4B942")));
         grid.Children.Add(actions);
-        var card = Card("RADAR SCANNER — TREND / TIMING / THANH KHOẢN / RR", _radarGrid);
-        Grid.SetRow(card, 1); grid.Children.Add(card);
+        var card = Card("RADAR SCANNER — TREND / TIMING / THANH KHOẢN / RR", _radarGrid); Grid.SetRow(card, 1); grid.Children.Add(card);
         return grid;
     }
 
-    private UIElement ChartWorkspace() => Card("BIỂU ĐỒ NẾN BINANCE 1H", ChartPanel());
+    private UIElement FullChartWorkspace() => Card("BIỂU ĐỒ NẾN BINANCE 1H", ChartPanel(_chartTitleFull, _chartCanvasFull));
 
-    private UIElement DecisionWorkspace()
+    private UIElement FullDecisionWorkspace()
     {
-        var grid = new Grid { Margin = new Thickness(10) };
-        grid.ColumnDefinitions.Add(new ColumnDefinition());
-        grid.ColumnDefinitions.Add(new ColumnDefinition());
-        grid.Children.Add(Card("QUYẾT ĐỊNH", _decision));
-        var plan = Card("ENTRY PLAN / VERIFY", _plan); Grid.SetColumn(plan, 1); grid.Children.Add(plan);
+        var grid = new Grid { Margin = new Thickness(10) }; grid.ColumnDefinitions.Add(new ColumnDefinition()); grid.ColumnDefinitions.Add(new ColumnDefinition());
+        grid.Children.Add(Card("QUYẾT ĐỊNH", _decisionFull));
+        var plan = Card("ENTRY PLAN / VERIFY", _planFull); Grid.SetColumn(plan, 1); grid.Children.Add(plan);
         return grid;
     }
 
     private UIElement Positions()
     {
-        var grid = new Grid { Margin = new Thickness(10) };
-        grid.RowDefinitions.Add(new RowDefinition());
-        grid.RowDefinitions.Add(new RowDefinition());
+        var grid = new Grid { Margin = new Thickness(10) }; grid.RowDefinitions.Add(new RowDefinition()); grid.RowDefinitions.Add(new RowDefinition());
         grid.Children.Add(Card("VỊ THẾ BINANCE — BOT + MỞ TAY", _positionsTabGrid));
         var orders = Card("LỆNH ĐANG MỞ / SL / TP REDUCE-ONLY", _ordersTabGrid); Grid.SetRow(orders, 1); grid.Children.Add(orders);
         return grid;
     }
 
-    private UIElement RiskWorkspace()
+    private UIElement FullRiskWorkspace()
     {
-        var grid = new Grid { Margin = new Thickness(10) };
-        grid.ColumnDefinitions.Add(new ColumnDefinition());
-        grid.ColumnDefinitions.Add(new ColumnDefinition());
-        grid.Children.Add(Card("RỦI RO PHIÊN", _riskSummary));
-        var safety = new StackPanel();
-        safety.Children.Add(Check("Một vị thế tối đa theo cấu hình"));
-        safety.Children.Add(Check("SL và TP reduce-only sau fill"));
-        safety.Children.Add(Check("Không DCA, không hedge"));
-        safety.Children.Add(Check("Không đuổi giá, không mua đỉnh bán đáy"));
-        safety.Children.Add(Check("Thiếu bảo vệ phải cảnh báo ngay"));
+        var grid = new Grid { Margin = new Thickness(10) }; grid.ColumnDefinitions.Add(new ColumnDefinition()); grid.ColumnDefinitions.Add(new ColumnDefinition());
+        grid.Children.Add(Card("RỦI RO PHIÊN", _riskSummaryFull));
+        var safety = new StackPanel(); safety.Children.Add(Check("Một vị thế tối đa theo cấu hình")); safety.Children.Add(Check("SL và TP reduce-only sau fill")); safety.Children.Add(Check("Không DCA, không hedge")); safety.Children.Add(Check("Không đuổi giá, không mua đỉnh bán đáy")); safety.Children.Add(Check("Thiếu bảo vệ phải cảnh báo ngay"));
         var right = Card("KIỂM SOÁT AN TOÀN", safety); Grid.SetColumn(right, 1); grid.Children.Add(right);
         return grid;
     }
 
     private UIElement PerformanceWorkspace()
     {
-        var grid = new Grid { Margin = new Thickness(10) };
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1.3, GridUnitType.Star) });
-        grid.RowDefinitions.Add(new RowDefinition());
-        grid.Children.Add(Card("ĐƯỜNG CONG TÀI SẢN — CHỈ HIỂN THỊ KHI CÓ DỮ LIỆU THẬT", _equityCanvas));
+        var grid = new Grid { Margin = new Thickness(10) }; grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1.2, GridUnitType.Star) }); grid.RowDefinitions.Add(new RowDefinition());
+        grid.Children.Add(Card("ĐƯỜNG CONG TÀI SẢN — CHỈ DỮ LIỆU THẬT", _equityCanvasFull));
         var lower = new Grid(); lower.ColumnDefinitions.Add(new ColumnDefinition()); lower.ColumnDefinitions.Add(new ColumnDefinition());
-        lower.Children.Add(Card("GIAO DỊCH GẦN ĐÂY", _recentTrades));
-        var logs = Card("NHẬT KÝ HIỆU SUẤT", _logPreview); Grid.SetColumn(logs, 1); lower.Children.Add(logs); Grid.SetRow(lower, 1); grid.Children.Add(lower);
+        lower.Children.Add(Card("GIAO DỊCH GẦN ĐÂY", _recentTradesFull));
+        var perf = Card("NHẬT KÝ HIỆU SUẤT", _performanceLog); Grid.SetColumn(perf, 1); lower.Children.Add(perf); Grid.SetRow(lower, 1); grid.Children.Add(lower);
         return grid;
     }
 
-    private UIElement AlertsWorkspace() => Card("CẢNH BÁO HỆ THỐNG / THỊ TRƯỜNG / VỊ THẾ", _alerts);
-
     private UIElement Api()
     {
-        var grid = new Grid { Margin = new Thickness(18) };
-        grid.ColumnDefinitions.Add(new ColumnDefinition());
-        grid.ColumnDefinitions.Add(new ColumnDefinition());
+        var grid = new Grid { Margin = new Thickness(18) }; grid.ColumnDefinitions.Add(new ColumnDefinition()); grid.ColumnDefinitions.Add(new ColumnDefinition());
         var form = new StackPanel { Margin = new Thickness(16), MaxWidth = 680, HorizontalAlignment = HorizontalAlignment.Left };
-        form.Children.Add(T("API BINANCE FUTURES", 22, Brushes.White, true));
-        form.Children.Add(T("API chỉ giữ trong bộ nhớ của phiên chạy.", 12, B("#7F9AB5")));
-        form.Children.Add(Label("API KEY")); form.Children.Add(_apiKey);
-        form.Children.Add(Label("API SECRET")); form.Children.Add(_apiSecret);
-        form.Children.Add(Label("MARGIN / LỆNH (USDT)")); form.Children.Add(_margin);
-        form.Children.Add(Label("ĐÒN BẨY")); form.Children.Add(_leverage);
-        form.Children.Add(Btn("KẾT NỐI TÀI KHOẢN", "#16784A", async (_, _) => await ConnectAccountAsync()));
-        form.Children.Add(_autoLive); form.Children.Add(_armButton);
+        form.Children.Add(T("API BINANCE FUTURES", 22, Brushes.White, true)); form.Children.Add(T("API chỉ giữ trong bộ nhớ của phiên chạy.", 12, B("#7F9AB5")));
+        form.Children.Add(Label("API KEY")); form.Children.Add(_apiKey); form.Children.Add(Label("API SECRET")); form.Children.Add(_apiSecret); form.Children.Add(Label("MARGIN / LỆNH (USDT)")); form.Children.Add(_margin); form.Children.Add(Label("ĐÒN BẨY")); form.Children.Add(_leverage);
+        form.Children.Add(Btn("KẾT NỐI TÀI KHOẢN", "#16784A", async (_, _) => await ConnectAccountAsync())); form.Children.Add(_autoLive); form.Children.Add(_armButton);
         grid.Children.Add(Card("CẤU HÌNH TÀI KHOẢN", form));
-        var right = new StackPanel { Margin = new Thickness(16) };
-        right.Children.Add(Card("TÀI KHOẢN", _account));
-        right.Children.Add(Card("TRẠNG THÁI LIVE", _statusMetric));
-        right.Children.Add(Card("RỦI RO", _riskSummary));
-        Grid.SetColumn(right, 1); grid.Children.Add(right);
+        var right = new StackPanel { Margin = new Thickness(16) }; right.Children.Add(Card("TÀI KHOẢN", _accountFull)); right.Children.Add(Card("TRẠNG THÁI LIVE", _statusFull)); right.Children.Add(Card("RỦI RO", T("LIVE chỉ mở sau VERIFY. Không lưu secret vào source.", 13, B("#F4B942")))); Grid.SetColumn(right, 1); grid.Children.Add(right);
         return grid;
+    }
+
+    private UIElement ChartPanel(TextBlock title, Canvas canvas)
+    {
+        var panel = new DockPanel(); var head = new Grid { Height = 32 }; head.ColumnDefinitions.Add(new ColumnDefinition()); head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); head.Children.Add(title); var tf = T("5m   15m   1H   4H", 11, B("#6E8BA8"), true); Grid.SetColumn(tf, 1); head.Children.Add(tf); DockPanel.SetDock(head, Dock.Top); panel.Children.Add(head); panel.Children.Add(canvas); return panel;
     }
 
     private UIElement QuickActions()
     {
-        var panel = new StackPanel();
-        panel.Children.Add(Btn("LÀM MỚI DỮ LIỆU", "#245EDB", (_, _) => _ = RefreshAllAsync()));
-        panel.Children.Add(Btn("QUÉT RADAR", "#275A8C", (_, _) => _ = ScanAsync()));
-        panel.Children.Add(Btn("GỬI LỆNH ĐÃ CHỌN", "#B66A00", async (_, _) => await ExecuteSelectedAsync()));
-        panel.Children.Add(Btn("DỪNG AUTO LỆNH", "#8B2430", (_, _) => { _autoLive.IsChecked = false; _liveArmed = false; }));
-        return panel;
+        var panel = new StackPanel(); panel.Children.Add(Btn("LÀM MỚI DỮ LIỆU", "#245EDB", (_, _) => _ = RefreshAllAsync())); panel.Children.Add(Btn("QUÉT RADAR", "#275A8C", (_, _) => _ = ScanAsync())); panel.Children.Add(Btn("GỬI LỆNH ĐÃ CHỌN", "#B66A00", async (_, _) => await ExecuteSelectedAsync())); panel.Children.Add(Btn("DỪNG AUTO LỆNH", "#8B2430", (_, _) => { _autoLive.IsChecked = false; _liveArmed = false; })); return panel;
     }
 
     private UIElement Footer()
     {
-        var grid = new Grid { Height = 30, Background = B("#071421") };
-        grid.ColumnDefinitions.Add(new ColumnDefinition());
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.Children.Add(T("TRENDGOVERNOR • SINGLE STATE • LIVE DATA • WINDOWS X64", 11, B("#6E8BA8")));
-        var right = T("Không đuổi giá • Không mua đỉnh • Không bán đáy", 11, B("#F4B942")); Grid.SetColumn(right, 1); grid.Children.Add(right);
-        return grid;
+        var grid = new Grid { Height = 30, Background = B("#071421") }; grid.ColumnDefinitions.Add(new ColumnDefinition()); grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); grid.Children.Add(T("TRENDGOVERNOR • SINGLE STATE • LIVE DATA • WINDOWS X64", 11, B("#6E8BA8"))); var right = T("Không đuổi giá • Không mua đỉnh • Không bán đáy", 11, B("#F4B942")); Grid.SetColumn(right, 1); grid.Children.Add(right); return grid;
     }
 
-    private static Style TabStyle()
-    {
-        var style = new Style(typeof(TabItem));
-        style.Setters.Add(new Setter(Control.ForegroundProperty, B("#AFC1D4")));
-        style.Setters.Add(new Setter(Control.BackgroundProperty, B("#071421")));
-        style.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(0)));
-        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(14)));
-        style.Setters.Add(new Setter(FrameworkElement.MarginProperty, new Thickness(0, 0, 0, 2)));
-        style.Setters.Add(new Setter(FrameworkElement.MinWidthProperty, 156d));
-        var trigger = new Trigger { Property = TabItem.IsSelectedProperty, Value = true };
-        trigger.Setters.Add(new Setter(Control.BackgroundProperty, B("#163A61")));
-        trigger.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
-        style.Triggers.Add(trigger);
-        return style;
-    }
-
-    private static TabItem Tab(string name, string icon, UIElement content)
-    {
-        var header = new StackPanel { Orientation = Orientation.Horizontal };
-        header.Children.Add(T(icon, 14, B("#61A8E8")));
-        header.Children.Add(T(name, 12, Brushes.White, true));
-        return new TabItem { Header = header, Content = content };
-    }
-
-    private static void Metric(Grid grid, int column, string title, TextBlock value, string note)
-    {
-        var panel = new StackPanel(); panel.Children.Add(T(title, 10, B("#7F9AB5"), true)); panel.Children.Add(value); panel.Children.Add(T(note, 10, B("#58728C")));
-        var card = Card(null, panel); Grid.SetColumn(card, column); grid.Children.Add(card);
-    }
-
-    private static Border Card(string? title, UIElement body)
-    {
-        var panel = new DockPanel();
-        if (!string.IsNullOrWhiteSpace(title)) { var heading = T(title, 12, B("#7FC2F2"), true); heading.Margin = new Thickness(8, 6, 8, 8); DockPanel.SetDock(heading, Dock.Top); panel.Children.Add(heading); }
-        panel.Children.Add(body);
-        return new Border { Background = B("#091827"), BorderBrush = B("#17344D"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Margin = new Thickness(4), Padding = new Thickness(6), Child = panel };
-    }
-
+    private static Style TabStyle() { var style = new Style(typeof(TabItem)); style.Setters.Add(new Setter(Control.ForegroundProperty, B("#AFC1D4"))); style.Setters.Add(new Setter(Control.BackgroundProperty, B("#071421"))); style.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(0))); style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(14))); style.Setters.Add(new Setter(FrameworkElement.MarginProperty, new Thickness(0, 0, 0, 2))); style.Setters.Add(new Setter(FrameworkElement.MinWidthProperty, 156d)); var trigger = new Trigger { Property = TabItem.IsSelectedProperty, Value = true }; trigger.Setters.Add(new Setter(Control.BackgroundProperty, B("#163A61"))); trigger.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White)); style.Triggers.Add(trigger); return style; }
+    private static TabItem Tab(string name, string icon, UIElement content) { var header = new StackPanel { Orientation = Orientation.Horizontal }; header.Children.Add(T(icon, 14, B("#61A8E8"))); header.Children.Add(T(name, 12, Brushes.White, true)); return new TabItem { Header = header, Content = content }; }
+    private static void Metric(Grid grid, int column, string title, TextBlock value, string note) { var panel = new StackPanel(); panel.Children.Add(T(title, 10, B("#7F9AB5"), true)); panel.Children.Add(value); panel.Children.Add(T(note, 10, B("#58728C"))); var card = Card(null, panel); Grid.SetColumn(card, column); grid.Children.Add(card); }
+    private static Border Card(string? title, UIElement body) { var panel = new DockPanel(); if (!string.IsNullOrWhiteSpace(title)) { var heading = T(title, 12, B("#7FC2F2"), true); heading.Margin = new Thickness(8, 6, 8, 8); DockPanel.SetDock(heading, Dock.Top); panel.Children.Add(heading); } panel.Children.Add(body); return new Border { Background = B("#091827"), BorderBrush = B("#17344D"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Margin = new Thickness(4), Padding = new Thickness(6), Child = panel }; }
     private static DataGrid BaseGrid() => new() { AutoGenerateColumns = false, IsReadOnly = true, SelectionMode = DataGridSelectionMode.Single, SelectionUnit = DataGridSelectionUnit.FullRow, Background = B("#071421"), Foreground = Brushes.White, GridLinesVisibility = DataGridGridLinesVisibility.Horizontal, HorizontalGridLinesBrush = B("#17344D"), BorderThickness = new Thickness(0), RowBackground = B("#071421"), AlternatingRowBackground = B("#0B1C2F"), RowHeight = 27, ColumnHeaderHeight = 30, CanUserAddRows = false, CanUserDeleteRows = false, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
     private static DataGrid MarketGrid(bool compact) { var grid = BaseGrid(); grid.Columns.Add(C("CẶP", "Symbol", 92)); grid.Columns.Add(C("GIÁ", "Price", 90, "0.########")); grid.Columns.Add(C("24H %", "Change24h", 72, "+0.00;-0.00;0.00")); grid.Columns.Add(C("HƯỚNG", "Direction", 70)); grid.Columns.Add(C("ĐIỂM", "Score", 58)); grid.Columns.Add(C("TRẠNG THÁI", "Status", compact ? 140 : 180)); if (!compact) { grid.Columns.Add(C("VÙNG VÀO THẤP", "EntryLow", 112, "0.########")); grid.Columns.Add(C("VÙNG VÀO CAO", "EntryHigh", 112, "0.########")); grid.Columns.Add(C("SL", "StopLoss", 100, "0.########")); grid.Columns.Add(C("TP", "TakeProfit", 100, "0.########")); grid.Columns.Add(C("RR", "RiskReward", 60, "0.00")); grid.Columns.Add(C("THANH KHOẢN", "QuoteVolume", 120, "N0")); } return grid; }
     private static DataGrid PositionGrid() { var grid = BaseGrid(); grid.Columns.Add(C("CẶP", "Symbol", 100)); grid.Columns.Add(C("HƯỚNG", "Side", 76)); grid.Columns.Add(C("KHỐI LƯỢNG", "Quantity", 100, "0.########")); grid.Columns.Add(C("GIÁ VÀO", "EntryPrice", 110, "0.########")); grid.Columns.Add(C("MARK", "MarkPrice", 110, "0.########")); grid.Columns.Add(C("PNL USDT", "UnrealizedPnl", 100, "+0.00;-0.00;0.00")); grid.Columns.Add(C("BẢO VỆ", "Protection", 140)); return grid; }

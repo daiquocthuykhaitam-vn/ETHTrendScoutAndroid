@@ -48,8 +48,11 @@ public sealed partial class MainWindow : Window
     private readonly PasswordBox _apiSecret = new() { Height = 34, Background = B("#0C1B2B"), Foreground = Brushes.White, BorderBrush = B("#284762"), Padding = new Thickness(8), Margin = new Thickness(0, 4, 0, 12) };
     private readonly TextBox _margin = Input("2");
     private readonly TextBox _leverage = Input("3");
-    private readonly CheckBox _autoLive = new() { Content = "AUTO LỆNH LIVE", Foreground = Brushes.White, Margin = new Thickness(0, 12, 0, 8) };
-    private readonly Button _armButton = Btn("BẬT QUYỀN LIVE", "#9B1C31");
+
+    // Legacy fields are retained only so the old manual path compiles; they are not exposed in the live workflow.
+    private readonly CheckBox _autoLive = new() { Visibility = Visibility.Collapsed, IsChecked = false };
+    private readonly Button _armButton = Btn("LEGACY LIVE", "#333333");
+
     private readonly TextBox _logs = LogBox();
     private readonly TextBox _logPreview = LogBox();
     private readonly TextBox _alerts = LogBox();
@@ -63,7 +66,7 @@ public sealed partial class MainWindow : Window
 
     public MainWindow()
     {
-        Title = "TRENDGOVERNOR LIVE CORE V2 - TERMINAL BUILD 08";
+        Title = "TRENDGOVERNOR LIVE CORE V2 - AUTO LIVE BUILD 09";
         Width = 1780;
         Height = 1040;
         MinWidth = 1440;
@@ -77,11 +80,15 @@ public sealed partial class MainWindow : Window
         _positionsTabGrid.ItemsSource = _state.Positions;
         _ordersTabGrid.ItemsSource = _state.Orders;
         _radarGrid.SelectionChanged += (_, _) => { if (_radarGrid.SelectedItem is MarketRow row) _ = SelectCandidateAsync(row); };
-        _armButton.Click += ArmLive;
 
         Content = Root();
         Loaded += OnLoaded;
-        Closed += (_, _) => _cts.Cancel();
+        Closed += async (_, _) =>
+        {
+            try { _autoCts?.Cancel(); } catch { }
+            try { await _execution.DisposeAsync(); } catch { }
+            _cts.Cancel();
+        };
         SizeChanged += (_, _) => { if (_selected != null) _ = SelectCandidateAsync(_selected); };
     }
 
@@ -101,8 +108,8 @@ public sealed partial class MainWindow : Window
         tabs.Items.Add(Tab("RỦI RO", "⬡", FullRiskWorkspace()));
         tabs.Items.Add(Tab("HIỆU SUẤT", "↗", PerformanceWorkspace()));
         tabs.Items.Add(Tab("CẢNH BÁO", "△", Card("CẢNH BÁO HỆ THỐNG / THỊ TRƯỜNG / VỊ THẾ", _alertsFull)));
-        tabs.Items.Add(Tab("API & LIVE", "⚙", Api()));
-        tabs.Items.Add(Tab("NHẬT KÝ", "≡", Card("NHẬT KÝ HỆ THỐNG / EXECUTION / PROTECTION", _logs)));
+        tabs.Items.Add(Tab("API & AUTO LIVE", "⚙", Api()));
+        tabs.Items.Add(Tab("NHẬT KÝ", "≡", Card("NHẬT KÝ PLAN / VERIFY / EXECUTE / FILL / PROTECT / MANAGE", _logs)));
         root.Children.Add(tabs);
         return root;
     }
@@ -120,9 +127,9 @@ public sealed partial class MainWindow : Window
         left.Children.Add(names); grid.Children.Add(left);
         var right = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 16, 0) };
         right.Children.Add(Pill("BINANCE FUTURES USD-M", "#15324A", Brushes.LightSkyBlue));
-        right.Children.Add(Pill("WS + REST", "#153B2B", B("#66D49A")));
+        right.Children.Add(Pill("USER STREAM + REST", "#153B2B", B("#66D49A")));
         right.Children.Add(_status);
-        right.Children.Add(Btn("LÀM MỚI", "#245EDB", (_, _) => _ = RefreshAllAsync()));
+        right.Children.Add(_autoState);
         Grid.SetColumn(right, 1); grid.Children.Add(right);
         return grid;
     }
@@ -138,20 +145,20 @@ public sealed partial class MainWindow : Window
         var metrics = new Grid();
         for (var i = 0; i < 6; i++) metrics.ColumnDefinitions.Add(new ColumnDefinition());
         Metric(metrics, 0, "TỔNG TÀI SẢN", _equityMetric, "Tài khoản Futures");
-        Metric(metrics, 1, "PNL ĐANG MỞ", _dailyPnlMetric, "Không dựng số liệu giả");
-        Metric(metrics, 2, "VỊ THẾ", _positionCount, "Đang mở trên Binance");
+        Metric(metrics, 1, "PNL ĐANG MỞ", _dailyPnlMetric, "Dữ liệu Binance thật");
+        Metric(metrics, 2, "VỊ THẾ", _positionCount, "Bot + vị thế tay");
         Metric(metrics, 3, "RỦI RO PHIÊN", _sessionRiskMetric, "Exposure / equity");
-        Metric(metrics, 4, "ỨNG VIÊN", _candidateCount, "Đủ điều kiện hiện tại");
-        Metric(metrics, 5, "SỨC KHỎE HỆ THỐNG", _statusMetric, "Dữ liệu + radar + tài khoản");
+        Metric(metrics, 4, "ỨNG VIÊN", _candidateCount, "Ổn định nhiều chu kỳ");
+        Metric(metrics, 5, "SỨC KHỎE HỆ THỐNG", _statusMetric, "Data + radar + execution");
         root.Children.Add(metrics);
 
         var center = new Grid();
-        center.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.02, GridUnitType.Star) });
-        center.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.6, GridUnitType.Star) });
-        center.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(.8, GridUnitType.Star) });
-        center.Children.Add(Card("RADAR — TOP CƠ HỘI", _marketGrid));
+        center.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.05, GridUnitType.Star) });
+        center.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.55, GridUnitType.Star) });
+        center.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(.85, GridUnitType.Star) });
+        center.Children.Add(Card("RADAR — TREND DÀI / SÓNG LỚN", _marketGrid));
         var chart = Card("BIỂU ĐỒ NẾN 1H — EMA / ENTRY / SL / TP", ChartPanel(_chartTitle, _chartCanvas)); Grid.SetColumn(chart, 1); center.Children.Add(chart);
-        var side = new StackPanel(); side.Children.Add(Card("QUYẾT ĐỊNH", _decision)); side.Children.Add(Card("KẾ HOẠCH VÀO", _plan)); side.Children.Add(Card("THAO TÁC NHANH", QuickActions())); Grid.SetColumn(side, 2); center.Children.Add(side);
+        var side = new StackPanel(); side.Children.Add(Card("QUYẾT ĐỊNH", _decision)); side.Children.Add(Card("KẾ HOẠCH ENTRY / SL / TP", _plan)); side.Children.Add(Card("AUTO LIVE", BuildAutoControlPanel())); Grid.SetColumn(side, 2); center.Children.Add(side);
         Grid.SetRow(center, 1); root.Children.Add(center);
 
         var middle = new Grid();
@@ -174,14 +181,14 @@ public sealed partial class MainWindow : Window
     private UIElement Radar()
     {
         var grid = new Grid { Margin = new Thickness(10) };
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); grid.RowDefinitions.Add(new RowDefinition());
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition());
         var actions = new StackPanel { Orientation = Orientation.Horizontal };
-        actions.Children.Add(Btn("QUÉT RADAR", "#245EDB", (_, _) => _ = ScanAsync()));
-        actions.Children.Add(Btn("GỬI LỆNH ĐÃ CHỌN", "#B66A00", async (_, _) => await ExecuteSelectedAsync()));
-        actions.Children.Add(Pill("KHÔNG ĐUỔI GIÁ", "#153B2B", B("#5ED99C")));
-        actions.Children.Add(Pill("KHÔNG MUA ĐỈNH / BÁN ĐÁY", "#3A2C12", B("#F4B942")));
+        actions.Children.Add(Btn("QUÉT THỦ CÔNG", "#275A8C", async (_, _) => await RunAutoCycleAsync(true, _cts.Token)));
+        actions.Children.Add(Pill("AUTO KHÔNG CẦN CLICK COIN", "#153B2B", B("#5ED99C")));
+        actions.Children.Add(Pill("KHÔNG ĐUỔI GIÁ / KHÔNG MUA ĐỈNH / KHÔNG BÁN ĐÁY", "#3A2C12", B("#F4B942")));
         grid.Children.Add(actions);
-        var card = Card("RADAR SCANNER — TREND / TIMING / THANH KHOẢN / RR", _radarGrid); Grid.SetRow(card, 1); grid.Children.Add(card);
+        var card = Card("RADAR SCANNER — 1D / 4H / 1H / 15M / 5M / ADX / WAVE / RR / STABILITY", _radarGrid); Grid.SetRow(card, 1); grid.Children.Add(card);
         return grid;
     }
 
@@ -191,7 +198,7 @@ public sealed partial class MainWindow : Window
     {
         var grid = new Grid { Margin = new Thickness(10) }; grid.ColumnDefinitions.Add(new ColumnDefinition()); grid.ColumnDefinitions.Add(new ColumnDefinition());
         grid.Children.Add(Card("QUYẾT ĐỊNH", _decisionFull));
-        var plan = Card("ENTRY PLAN / VERIFY", _planFull); Grid.SetColumn(plan, 1); grid.Children.Add(plan);
+        var plan = Card("FROZEN ENTRY / SL / TP PLAN + VERIFY", _planFull); Grid.SetColumn(plan, 1); grid.Children.Add(plan);
         return grid;
     }
 
@@ -207,7 +214,13 @@ public sealed partial class MainWindow : Window
     {
         var grid = new Grid { Margin = new Thickness(10) }; grid.ColumnDefinitions.Add(new ColumnDefinition()); grid.ColumnDefinitions.Add(new ColumnDefinition());
         grid.Children.Add(Card("RỦI RO PHIÊN", _riskSummaryFull));
-        var safety = new StackPanel(); safety.Children.Add(Check("Một vị thế tối đa theo cấu hình")); safety.Children.Add(Check("SL và TP reduce-only sau fill")); safety.Children.Add(Check("Không DCA, không hedge")); safety.Children.Add(Check("Không đuổi giá, không mua đỉnh bán đáy")); safety.Children.Add(Check("Thiếu bảo vệ phải cảnh báo ngay"));
+        var safety = new StackPanel();
+        safety.Children.Add(Check("Một vị thế tối đa theo cấu hình"));
+        safety.Children.Add(Check("One-way + ISOLATED + leverage giới hạn"));
+        safety.Children.Add(Check("FILL thật mới phát hành SL/TP algo"));
+        safety.Children.Add(Check("Không đủ SL/TP: đóng reduce-only và khóa lệnh mới"));
+        safety.Children.Add(Check("Không DCA, không hedge, không gửi trùng"));
+        safety.Children.Add(Check("Không đuổi giá, không mua đỉnh, không bán đáy"));
         var right = Card("KIỂM SOÁT AN TOÀN", safety); Grid.SetColumn(right, 1); grid.Children.Add(right);
         return grid;
     }
@@ -226,38 +239,136 @@ public sealed partial class MainWindow : Window
     {
         var grid = new Grid { Margin = new Thickness(18) }; grid.ColumnDefinitions.Add(new ColumnDefinition()); grid.ColumnDefinitions.Add(new ColumnDefinition());
         var form = new StackPanel { Margin = new Thickness(16), MaxWidth = 680, HorizontalAlignment = HorizontalAlignment.Left };
-        form.Children.Add(T("API BINANCE FUTURES", 22, Brushes.White, true)); form.Children.Add(T("API chỉ giữ trong bộ nhớ của phiên chạy.", 12, B("#7F9AB5")));
-        form.Children.Add(Label("API KEY")); form.Children.Add(_apiKey); form.Children.Add(Label("API SECRET")); form.Children.Add(_apiSecret); form.Children.Add(Label("MARGIN / LỆNH (USDT)")); form.Children.Add(_margin); form.Children.Add(Label("ĐÒN BẨY")); form.Children.Add(_leverage);
-        form.Children.Add(Btn("KẾT NỐI TÀI KHOẢN", "#16784A", async (_, _) => await ConnectAccountAsync())); form.Children.Add(_autoLive); form.Children.Add(_armButton);
-        grid.Children.Add(Card("CẤU HÌNH TÀI KHOẢN", form));
-        var right = new StackPanel { Margin = new Thickness(16) }; right.Children.Add(Card("TÀI KHOẢN", _accountFull)); right.Children.Add(Card("TRẠNG THÁI LIVE", _statusFull)); right.Children.Add(Card("RỦI RO", T("LIVE chỉ mở sau VERIFY. Không lưu secret vào source.", 13, B("#F4B942")))); Grid.SetColumn(right, 1); grid.Children.Add(right);
+        form.Children.Add(T("API BINANCE FUTURES", 22, Brushes.White, true));
+        form.Children.Add(T("Nhập API một lần trong phiên, sau đó bấm BẮT ĐẦU AUTO LIVE một lần.", 12, B("#7F9AB5")));
+        form.Children.Add(Label("API KEY")); form.Children.Add(_apiKey);
+        form.Children.Add(Label("API SECRET")); form.Children.Add(_apiSecret);
+        form.Children.Add(Label("MARGIN / LỆNH (USDT)")); form.Children.Add(_margin);
+        form.Children.Add(Label("ĐÒN BẨY")); form.Children.Add(_leverage);
+        form.Children.Add(BuildAutoControlPanel());
+        grid.Children.Add(Card("CẤU HÌNH AUTO LIVE", form));
+        var right = new StackPanel { Margin = new Thickness(16) };
+        right.Children.Add(Card("TÀI KHOẢN", _accountFull));
+        right.Children.Add(Card("TRẠNG THÁI LIVE", _statusFull));
+        right.Children.Add(Card("QUY TRÌNH", T("Đồng bộ → Radar → Plan → Verify → Execute → Fill → Protect → Manage → Radar", 13, B("#F4B942"))));
+        Grid.SetColumn(right, 1); grid.Children.Add(right);
         return grid;
     }
 
     private UIElement ChartPanel(TextBlock title, Canvas canvas)
     {
-        var panel = new DockPanel(); var head = new Grid { Height = 32 }; head.ColumnDefinitions.Add(new ColumnDefinition()); head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); head.Children.Add(title); var tf = T("5m   15m   1H   4H", 11, B("#6E8BA8"), true); Grid.SetColumn(tf, 1); head.Children.Add(tf); DockPanel.SetDock(head, Dock.Top); panel.Children.Add(head); panel.Children.Add(canvas); return panel;
-    }
-
-    private UIElement QuickActions()
-    {
-        var panel = new StackPanel(); panel.Children.Add(Btn("LÀM MỚI DỮ LIỆU", "#245EDB", (_, _) => _ = RefreshAllAsync())); panel.Children.Add(Btn("QUÉT RADAR", "#275A8C", (_, _) => _ = ScanAsync())); panel.Children.Add(Btn("GỬI LỆNH ĐÃ CHỌN", "#B66A00", async (_, _) => await ExecuteSelectedAsync())); panel.Children.Add(Btn("DỪNG AUTO LỆNH", "#8B2430", (_, _) => { _autoLive.IsChecked = false; _liveArmed = false; })); return panel;
+        var panel = new DockPanel();
+        var head = new Grid { Height = 32 };
+        head.ColumnDefinitions.Add(new ColumnDefinition()); head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        head.Children.Add(title);
+        var tf = T("5m   15m   1H   4H   1D", 11, B("#6E8BA8"), true); Grid.SetColumn(tf, 1); head.Children.Add(tf);
+        DockPanel.SetDock(head, Dock.Top); panel.Children.Add(head); panel.Children.Add(canvas); return panel;
     }
 
     private UIElement Footer()
     {
-        var grid = new Grid { Height = 30, Background = B("#071421") }; grid.ColumnDefinitions.Add(new ColumnDefinition()); grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); grid.Children.Add(T("TRENDGOVERNOR • SINGLE STATE • LIVE DATA • WINDOWS X64", 11, B("#6E8BA8"))); var right = T("Không đuổi giá • Không mua đỉnh • Không bán đáy", 11, B("#F4B942")); Grid.SetColumn(right, 1); grid.Children.Add(right); return grid;
+        var grid = new Grid { Height = 30, Background = B("#071421") };
+        grid.ColumnDefinitions.Add(new ColumnDefinition()); grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.Children.Add(T("TRENDGOVERNOR • SINGLE STATE • LIVE DATA • WINDOWS X64", 11, B("#6E8BA8")));
+        var right = T("AUTO xuyên suốt • FILL thật • SL/TP algo xác minh", 11, B("#F4B942")); Grid.SetColumn(right, 1); grid.Children.Add(right); return grid;
     }
 
-    private static Style TabStyle() { var style = new Style(typeof(TabItem)); style.Setters.Add(new Setter(Control.ForegroundProperty, B("#AFC1D4"))); style.Setters.Add(new Setter(Control.BackgroundProperty, B("#071421"))); style.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(0))); style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(14))); style.Setters.Add(new Setter(FrameworkElement.MarginProperty, new Thickness(0, 0, 0, 2))); style.Setters.Add(new Setter(FrameworkElement.MinWidthProperty, 156d)); var trigger = new Trigger { Property = TabItem.IsSelectedProperty, Value = true }; trigger.Setters.Add(new Setter(Control.BackgroundProperty, B("#163A61"))); trigger.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White)); style.Triggers.Add(trigger); return style; }
-    private static TabItem Tab(string name, string icon, UIElement content) { var header = new StackPanel { Orientation = Orientation.Horizontal }; header.Children.Add(T(icon, 14, B("#61A8E8"))); header.Children.Add(T(name, 12, Brushes.White, true)); return new TabItem { Header = header, Content = content }; }
-    private static void Metric(Grid grid, int column, string title, TextBlock value, string note) { var panel = new StackPanel(); panel.Children.Add(T(title, 10, B("#7F9AB5"), true)); panel.Children.Add(value); panel.Children.Add(T(note, 10, B("#58728C"))); var card = Card(null, panel); Grid.SetColumn(card, column); grid.Children.Add(card); }
-    private static Border Card(string? title, UIElement body) { var panel = new DockPanel(); if (!string.IsNullOrWhiteSpace(title)) { var heading = T(title, 12, B("#7FC2F2"), true); heading.Margin = new Thickness(8, 6, 8, 8); DockPanel.SetDock(heading, Dock.Top); panel.Children.Add(heading); } panel.Children.Add(body); return new Border { Background = B("#091827"), BorderBrush = B("#17344D"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Margin = new Thickness(4), Padding = new Thickness(6), Child = panel }; }
-    private static DataGrid BaseGrid() => new() { AutoGenerateColumns = false, IsReadOnly = true, SelectionMode = DataGridSelectionMode.Single, SelectionUnit = DataGridSelectionUnit.FullRow, Background = B("#071421"), Foreground = Brushes.White, GridLinesVisibility = DataGridGridLinesVisibility.Horizontal, HorizontalGridLinesBrush = B("#17344D"), BorderThickness = new Thickness(0), RowBackground = B("#071421"), AlternatingRowBackground = B("#0B1C2F"), RowHeight = 27, ColumnHeaderHeight = 30, CanUserAddRows = false, CanUserDeleteRows = false, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-    private static DataGrid MarketGrid(bool compact) { var grid = BaseGrid(); grid.Columns.Add(C("CẶP", "Symbol", 92)); grid.Columns.Add(C("GIÁ", "Price", 90, "0.########")); grid.Columns.Add(C("24H %", "Change24h", 72, "+0.00;-0.00;0.00")); grid.Columns.Add(C("HƯỚNG", "Direction", 70)); grid.Columns.Add(C("ĐIỂM", "Score", 58)); grid.Columns.Add(C("TRẠNG THÁI", "Status", compact ? 140 : 180)); if (!compact) { grid.Columns.Add(C("VÙNG VÀO THẤP", "EntryLow", 112, "0.########")); grid.Columns.Add(C("VÙNG VÀO CAO", "EntryHigh", 112, "0.########")); grid.Columns.Add(C("SL", "StopLoss", 100, "0.########")); grid.Columns.Add(C("TP", "TakeProfit", 100, "0.########")); grid.Columns.Add(C("RR", "RiskReward", 60, "0.00")); grid.Columns.Add(C("THANH KHOẢN", "QuoteVolume", 120, "N0")); } return grid; }
-    private static DataGrid PositionGrid() { var grid = BaseGrid(); grid.Columns.Add(C("CẶP", "Symbol", 100)); grid.Columns.Add(C("HƯỚNG", "Side", 76)); grid.Columns.Add(C("KHỐI LƯỢNG", "Quantity", 100, "0.########")); grid.Columns.Add(C("GIÁ VÀO", "EntryPrice", 110, "0.########")); grid.Columns.Add(C("MARK", "MarkPrice", 110, "0.########")); grid.Columns.Add(C("PNL USDT", "UnrealizedPnl", 100, "+0.00;-0.00;0.00")); grid.Columns.Add(C("BẢO VỆ", "Protection", 140)); return grid; }
-    private static DataGrid OrderGrid() { var grid = BaseGrid(); grid.Columns.Add(C("CẶP", "Symbol", 92)); grid.Columns.Add(C("LOẠI", "Type", 130)); grid.Columns.Add(C("SIDE", "Side", 65)); grid.Columns.Add(C("GIÁ", "Price", 90, "0.########")); grid.Columns.Add(C("GIÁ KÍCH HOẠT", "StopPrice", 115, "0.########")); grid.Columns.Add(C("QTY", "Quantity", 90, "0.########")); grid.Columns.Add(C("TRẠNG THÁI", "Status", 95)); grid.Columns.Add(C("GIẢM VỊ THẾ", "ReduceOnly", 95)); return grid; }
-    private static DataGridTextColumn C(string header, string path, double width, string? format = null) { var binding = new Binding(path); if (!string.IsNullOrWhiteSpace(format)) binding.StringFormat = format; return new DataGridTextColumn { Header = header, Binding = binding, Width = width }; }
+    private static Style TabStyle()
+    {
+        var style = new Style(typeof(TabItem));
+        style.Setters.Add(new Setter(Control.ForegroundProperty, B("#AFC1D4")));
+        style.Setters.Add(new Setter(Control.BackgroundProperty, B("#071421")));
+        style.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(0)));
+        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(14)));
+        style.Setters.Add(new Setter(FrameworkElement.MarginProperty, new Thickness(0, 0, 0, 2)));
+        style.Setters.Add(new Setter(FrameworkElement.MinWidthProperty, 168d));
+        var trigger = new Trigger { Property = TabItem.IsSelectedProperty, Value = true };
+        trigger.Setters.Add(new Setter(Control.BackgroundProperty, B("#163A61")));
+        trigger.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
+        style.Triggers.Add(trigger);
+        return style;
+    }
+
+    private static TabItem Tab(string name, string icon, UIElement content)
+    {
+        var header = new StackPanel { Orientation = Orientation.Horizontal };
+        header.Children.Add(T(icon, 14, B("#61A8E8"))); header.Children.Add(T(name, 12, Brushes.White, true));
+        return new TabItem { Header = header, Content = content };
+    }
+
+    private static void Metric(Grid grid, int column, string title, TextBlock value, string note)
+    {
+        var panel = new StackPanel(); panel.Children.Add(T(title, 10, B("#7F9AB5"), true)); panel.Children.Add(value); panel.Children.Add(T(note, 10, B("#58728C")));
+        var card = Card(null, panel); Grid.SetColumn(card, column); grid.Children.Add(card);
+    }
+
+    private static Border Card(string? title, UIElement body)
+    {
+        var panel = new DockPanel();
+        if (!string.IsNullOrWhiteSpace(title))
+        {
+            var heading = T(title, 12, B("#7FC2F2"), true); heading.Margin = new Thickness(8, 6, 8, 8); DockPanel.SetDock(heading, Dock.Top); panel.Children.Add(heading);
+        }
+        panel.Children.Add(body);
+        return new Border { Background = B("#091827"), BorderBrush = B("#17344D"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Margin = new Thickness(4), Padding = new Thickness(6), Child = panel };
+    }
+
+    private static DataGrid BaseGrid() => new()
+    {
+        AutoGenerateColumns = false, IsReadOnly = true, SelectionMode = DataGridSelectionMode.Single, SelectionUnit = DataGridSelectionUnit.FullRow,
+        Background = B("#071421"), Foreground = Brushes.White, GridLinesVisibility = DataGridGridLinesVisibility.Horizontal,
+        HorizontalGridLinesBrush = B("#17344D"), BorderThickness = new Thickness(0), RowBackground = B("#071421"), AlternatingRowBackground = B("#0B1C2F"),
+        RowHeight = 27, ColumnHeaderHeight = 30, CanUserAddRows = false, CanUserDeleteRows = false,
+        HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+    };
+
+    private static DataGrid MarketGrid(bool compact)
+    {
+        var grid = BaseGrid();
+        grid.Columns.Add(C("CẶP", "Symbol", 92));
+        grid.Columns.Add(C("GIÁ", "Price", 90, "0.########"));
+        grid.Columns.Add(C("HƯỚNG", "Direction", 70));
+        grid.Columns.Add(C("ĐIỂM", "Score", 58));
+        grid.Columns.Add(C("TREND", "TrendScore", 62));
+        grid.Columns.Add(C("SÓNG", "WaveScore", 58));
+        grid.Columns.Add(C("ỔN ĐỊNH", "StableCycles", 66));
+        grid.Columns.Add(C("TRẠNG THÁI", "Status", compact ? 150 : 180));
+        if (!compact)
+        {
+            grid.Columns.Add(C("1D", "Trend1D", 70)); grid.Columns.Add(C("4H", "Trend4H", 70)); grid.Columns.Add(C("1H", "Trend1H", 70));
+            grid.Columns.Add(C("ADX", "Adx1H", 58, "0.0")); grid.Columns.Add(C("VỊ TRÍ %", "PositionPercent", 70, "0.0"));
+            grid.Columns.Add(C("ENTRY THẤP", "EntryLow", 105, "0.########")); grid.Columns.Add(C("ENTRY CAO", "EntryHigh", 105, "0.########"));
+            grid.Columns.Add(C("SL", "StopLoss", 100, "0.########")); grid.Columns.Add(C("TP", "TakeProfit", 100, "0.########")); grid.Columns.Add(C("RR", "RiskReward", 60, "0.00"));
+            grid.Columns.Add(C("LÝ DO", "Reason", 300));
+        }
+        return grid;
+    }
+
+    private static DataGrid PositionGrid()
+    {
+        var grid = BaseGrid();
+        grid.Columns.Add(C("CẶP", "Symbol", 100)); grid.Columns.Add(C("HƯỚNG", "Side", 76)); grid.Columns.Add(C("KHỐI LƯỢNG", "Quantity", 100, "0.########"));
+        grid.Columns.Add(C("GIÁ VÀO", "EntryPrice", 110, "0.########")); grid.Columns.Add(C("MARK", "MarkPrice", 110, "0.########"));
+        grid.Columns.Add(C("PNL USDT", "UnrealizedPnl", 100, "+0.00;-0.00;0.00")); grid.Columns.Add(C("PEAK", "PeakUnrealizedPnl", 90, "+0.00;-0.00;0.00"));
+        grid.Columns.Add(C("GIVEBACK %", "GivebackPercent", 90, "0.0")); grid.Columns.Add(C("BẢO VỆ", "Protection", 130)); grid.Columns.Add(C("KHUYẾN NGHỊ", "Recommendation", 190));
+        return grid;
+    }
+
+    private static DataGrid OrderGrid()
+    {
+        var grid = BaseGrid();
+        grid.Columns.Add(C("CẶP", "Symbol", 92)); grid.Columns.Add(C("LOẠI", "Type", 130)); grid.Columns.Add(C("SIDE", "Side", 65));
+        grid.Columns.Add(C("GIÁ", "Price", 90, "0.########")); grid.Columns.Add(C("GIÁ KÍCH HOẠT", "StopPrice", 115, "0.########"));
+        grid.Columns.Add(C("QTY", "Quantity", 90, "0.########")); grid.Columns.Add(C("TRẠNG THÁI", "Status", 95)); grid.Columns.Add(C("GIẢM VỊ THẾ", "ReduceOnly", 95));
+        return grid;
+    }
+
+    private static DataGridTextColumn C(string header, string path, double width, string? format = null)
+    {
+        var binding = new Binding(path); if (!string.IsNullOrWhiteSpace(format)) binding.StringFormat = format;
+        return new DataGridTextColumn { Header = header, Binding = binding, Width = width };
+    }
+
     private static TextBox Input(string value = "") => new() { Text = value, Height = 34, Margin = new Thickness(0, 4, 0, 12), Background = B("#0C1B2B"), Foreground = Brushes.White, BorderBrush = B("#284762"), Padding = new Thickness(8) };
     private static TextBox LogBox() => new() { IsReadOnly = true, AcceptsReturn = true, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, Background = B("#071421"), Foreground = B("#AFC1D4"), BorderThickness = new Thickness(0), FontFamily = new FontFamily("Consolas"), FontSize = 12, Padding = new Thickness(8) };
     private static TextBlock Label(string value) => T(value, 11, B("#AFC1D4"), true);

@@ -1,4 +1,4 @@
-name: TrendGovernor Windows Build 07 Terminal UI
+name: TrendGovernor Windows Build 08 Baseline Terminal
 
 on:
   pull_request:
@@ -52,7 +52,7 @@ jobs:
           New-Item -ItemType Directory -Path $logs -Force | Out-Null
           if (Test-Path $crashLog) { Remove-Item $crashLog -Force }
           $process = Start-Process -FilePath $exe -WorkingDirectory $release -PassThru
-          Start-Sleep -Seconds 20
+          Start-Sleep -Seconds 25
           $process.Refresh()
           if (Test-Path $crashLog) {
             $content = Get-Content $crashLog -Raw
@@ -64,19 +64,19 @@ jobs:
           }
           if ($process.HasExited) { throw "WPF startup smoke test failed: process exited early with code $($process.ExitCode)." }
           Stop-Process -Id $process.Id -Force
-          Write-Host 'WPF startup smoke test PASS: no fatal log and process remained alive for 20 seconds.'
+          Write-Host 'WPF startup smoke test PASS: no fatal log and process remained alive for 25 seconds.'
 
       - name: Package release
         shell: pwsh
         run: |
           Copy-Item 'TrendGovernorLiveCoreV2/START_TOOL.cmd' 'TrendGovernorLiveCoreV2/release/START_TOOL.cmd' -Force
           New-Item -ItemType Directory -Path 'TrendGovernorLiveCoreV2/release/logs' -Force | Out-Null
-          Compress-Archive -Path 'TrendGovernorLiveCoreV2/release/*' -DestinationPath 'TRENDGOVERNOR_WINDOWS_X64_BUILD_07_TERMINAL_UI.zip' -Force
+          Compress-Archive -Path 'TrendGovernorLiveCoreV2/release/*' -DestinationPath 'TRENDGOVERNOR_WINDOWS_X64_BUILD_08_BASELINE_TERMINAL.zip' -Force
 
       - name: Upload Windows release
         uses: actions/upload-artifact@v4
         with:
-          name: TRENDGOVERNOR_WINDOWS_X64_BUILD_07_TERMINAL_UI
-          path: TRENDGOVERNOR_WINDOWS_X64_BUILD_07_TERMINAL_UI.zip
+          name: TRENDGOVERNOR_WINDOWS_X64_BUILD_08_BASELINE_TERMINAL
+          path: TRENDGOVERNOR_WINDOWS_X64_BUILD_08_BASELINE_TERMINAL.zip
           if-no-files-found: error
           retention-days: 30

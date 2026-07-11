@@ -48,8 +48,6 @@ public sealed partial class MainWindow : Window
     private readonly PasswordBox _apiSecret = new() { Height = 34, Background = B("#0C1B2B"), Foreground = Brushes.White, BorderBrush = B("#284762"), Padding = new Thickness(8), Margin = new Thickness(0, 4, 0, 12) };
     private readonly TextBox _margin = Input("2");
     private readonly TextBox _leverage = Input("3");
-
-    // Legacy fields are retained only so the old manual path compiles; they are not exposed in the live workflow.
     private readonly CheckBox _autoLive = new() { Visibility = Visibility.Collapsed, IsChecked = false };
     private readonly Button _armButton = Btn("LEGACY LIVE", "#333333");
 
@@ -129,7 +127,6 @@ public sealed partial class MainWindow : Window
         right.Children.Add(Pill("BINANCE FUTURES USD-M", "#15324A", Brushes.LightSkyBlue));
         right.Children.Add(Pill("USER STREAM + REST", "#153B2B", B("#66D49A")));
         right.Children.Add(_status);
-        right.Children.Add(_autoState);
         Grid.SetColumn(right, 1); grid.Children.Add(right);
         return grid;
     }
@@ -158,7 +155,11 @@ public sealed partial class MainWindow : Window
         center.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(.85, GridUnitType.Star) });
         center.Children.Add(Card("RADAR — TREND DÀI / SÓNG LỚN", _marketGrid));
         var chart = Card("BIỂU ĐỒ NẾN 1H — EMA / ENTRY / SL / TP", ChartPanel(_chartTitle, _chartCanvas)); Grid.SetColumn(chart, 1); center.Children.Add(chart);
-        var side = new StackPanel(); side.Children.Add(Card("QUYẾT ĐỊNH", _decision)); side.Children.Add(Card("KẾ HOẠCH ENTRY / SL / TP", _plan)); side.Children.Add(Card("AUTO LIVE", BuildAutoControlPanel())); Grid.SetColumn(side, 2); center.Children.Add(side);
+        var side = new StackPanel();
+        side.Children.Add(Card("QUYẾT ĐỊNH", _decision));
+        side.Children.Add(Card("KẾ HOẠCH ENTRY / SL / TP", _plan));
+        side.Children.Add(Card("AUTO LIVE", T("Nhập API và điều khiển tại tab API & AUTO LIVE. Sau khi bắt đầu, hệ thống chạy toàn bộ quy trình tự động.", 12, B("#7F9AB5"))));
+        Grid.SetColumn(side, 2); center.Children.Add(side);
         Grid.SetRow(center, 1); root.Children.Add(center);
 
         var middle = new Grid();

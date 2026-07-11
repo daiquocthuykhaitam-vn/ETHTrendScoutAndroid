@@ -1,4 +1,4 @@
-name: TrendGovernor Windows Build 05
+name: TrendGovernor Windows Build 06
 
 on:
   pull_request:
@@ -42,34 +42,47 @@ jobs:
           if ($file.Length -lt 1000000) { throw "Executable is unexpectedly small: $($file.Length) bytes" }
           Get-FileHash $exe -Algorithm SHA256 | Format-List
 
-      - name: Startup smoke test
+      - name: Startup smoke test with crash-log gate
         shell: pwsh
         run: |
           $release = Resolve-Path 'TrendGovernorLiveCoreV2/release'
           $exe = Join-Path $release 'TrendGovernor.Wpf.exe'
-          New-Item -ItemType Directory -Path (Join-Path $release 'logs') -Force | Out-Null
+          $logs = Join-Path $release 'logs'
+          $crashLog = Join-Path $logs 'startup-crash.log'
+          New-Item -ItemType Directory -Path $logs -Force | Out-Null
+          if (Test-Path $crashLog) { Remove-Item $crashLog -Force }
+
           $process = Start-Process -FilePath $exe -WorkingDirectory $release -PassThru
-          Start-Sleep -Seconds 12
-          if ($process.HasExited) {
-            Write-Host "Process exited early with code $($process.ExitCode)"
-            $crashLog = Join-Path $release 'logs/startup-crash.log'
-            if (Test-Path $crashLog) { Get-Content $crashLog }
-            throw 'WPF startup smoke test failed: process exited before 12 seconds.'
+          Start-Sleep -Seconds 15
+          $process.Refresh()
+
+          if (Test-Path $crashLog) {
+            $content = Get-Content $crashLog -Raw
+            Write-Host $content
+            if ($content -match 'STARTUP_FATAL|UI_FATAL|UNHANDLED') {
+              if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+              throw 'WPF startup smoke test failed: fatal startup log detected.'
+            }
           }
+
+          if ($process.HasExited) {
+            throw "WPF startup smoke test failed: process exited early with code $($process.ExitCode)."
+          }
+
           Stop-Process -Id $process.Id -Force
-          Write-Host 'WPF startup smoke test PASS: process remained alive for 12 seconds.'
+          Write-Host 'WPF startup smoke test PASS: no fatal log and process remained alive for 15 seconds.'
 
       - name: Package release
         shell: pwsh
         run: |
           Copy-Item 'TrendGovernorLiveCoreV2/START_TOOL.cmd' 'TrendGovernorLiveCoreV2/release/START_TOOL.cmd' -Force
           New-Item -ItemType Directory -Path 'TrendGovernorLiveCoreV2/release/logs' -Force | Out-Null
-          Compress-Archive -Path 'TrendGovernorLiveCoreV2/release/*' -DestinationPath 'TRENDGOVERNOR_WINDOWS_X64_BUILD_05_STARTUP_FIXED.zip' -Force
+          Compress-Archive -Path 'TrendGovernorLiveCoreV2/release/*' -DestinationPath 'TRENDGOVERNOR_WINDOWS_X64_BUILD_06_UI_PARENT_FIXED.zip' -Force
 
       - name: Upload Windows release
         uses: actions/upload-artifact@v4
         with:
-          name: TRENDGOVERNOR_WINDOWS_X64_BUILD_05_STARTUP_FIXED
-          path: TRENDGOVERNOR_WINDOWS_X64_BUILD_05_STARTUP_FIXED.zip
+          name: TRENDGOVERNOR_WINDOWS_X64_BUILD_06_UI_PARENT_FIXED
+          path: TRENDGOVERNOR_WINDOWS_X64_BUILD_06_UI_PARENT_FIXED.zip
           if-no-files-found: error
           retention-days: 30

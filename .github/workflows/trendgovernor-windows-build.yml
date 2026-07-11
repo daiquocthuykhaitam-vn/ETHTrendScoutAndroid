@@ -1,0 +1,66 @@
+name: TrendGovernor Windows Build 04
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '.tgpayload/**'
+      - '.github/workflows/trendgovernor-windows-build.yml'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore source payload
+        shell: pwsh
+        run: |
+          $b64 = Get-Content '.tgpayload/core.tar.xz.b64' -Raw
+          [IO.File]::WriteAllBytes('core.tar.xz', [Convert]::FromBase64String($b64))
+          New-Item -ItemType Directory -Path 'TrendGovernorLiveCoreV2' -Force | Out-Null
+          tar -xf core.tar.xz -C TrendGovernorLiveCoreV2
+          if (-not (Test-Path 'TrendGovernorLiveCoreV2/src/TrendGovernor.Wpf/TrendGovernor.Wpf.csproj')) { throw 'WPF project not found after payload extraction.' }
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore 'TrendGovernorLiveCoreV2/src/TrendGovernor.Wpf/TrendGovernor.Wpf.csproj' -r win-x64
+
+      - name: Build
+        shell: pwsh
+        run: dotnet build 'TrendGovernorLiveCoreV2/src/TrendGovernor.Wpf/TrendGovernor.Wpf.csproj' -c Release -r win-x64 --no-restore
+
+      - name: Publish single-file Windows x64
+        shell: pwsh
+        run: dotnet publish 'TrendGovernorLiveCoreV2/src/TrendGovernor.Wpf/TrendGovernor.Wpf.csproj' -c Release -r win-x64 --self-contained true --no-restore -o 'TrendGovernorLiveCoreV2/release' /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true
+
+      - name: Verify artifact
+        shell: pwsh
+        run: |
+          $exe = 'TrendGovernorLiveCoreV2/release/TrendGovernor.Wpf.exe'
+          if (-not (Test-Path $exe)) { throw 'TrendGovernor.Wpf.exe was not produced.' }
+          Get-ChildItem 'TrendGovernorLiveCoreV2/release' | Format-Table Name, Length
+          Get-FileHash $exe -Algorithm SHA256 | Format-List
+
+      - name: Package release
+        shell: pwsh
+        run: |
+          Copy-Item 'TrendGovernorLiveCoreV2/START_TOOL.cmd' 'TrendGovernorLiveCoreV2/release/START_TOOL.cmd' -Force
+          Copy-Item 'TrendGovernorLiveCoreV2/config' 'TrendGovernorLiveCoreV2/release/config' -Recurse -Force
+          Compress-Archive -Path 'TrendGovernorLiveCoreV2/release/*' -DestinationPath 'TRENDGOVERNOR_WINDOWS_X64_BUILD_04.zip' -Force
+
+      - name: Upload Windows release
+        uses: actions/upload-artifact@v4
+        with:
+          name: TRENDGOVERNOR_WINDOWS_X64_BUILD_04
+          path: TRENDGOVERNOR_WINDOWS_X64_BUILD_04.zip
+          if-no-files-found: error
+          retention-days: 30

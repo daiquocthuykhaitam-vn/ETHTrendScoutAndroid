@@ -18,6 +18,16 @@ public sealed class MarketRow
     public decimal RiskReward { get; set; }
 }
 
+public sealed class CandlePoint
+{
+    public DateTime OpenTime { get; set; }
+    public decimal Open { get; set; }
+    public decimal High { get; set; }
+    public decimal Low { get; set; }
+    public decimal Close { get; set; }
+    public decimal Volume { get; set; }
+}
+
 public sealed class PositionRow
 {
     public string Symbol { get; set; } = "";

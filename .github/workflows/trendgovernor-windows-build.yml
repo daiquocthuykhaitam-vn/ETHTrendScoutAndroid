@@ -19,10 +19,7 @@ jobs:
       - name: Restore source payload
         shell: pwsh
         run: |
-          $b64 = Get-Content '.tgpayload/core.tar.xz.b64' -Raw
-          [IO.File]::WriteAllBytes('core.tar.xz', [Convert]::FromBase64String($b64))
-          New-Item -ItemType Directory -Path 'TrendGovernorLiveCoreV2' -Force | Out-Null
-          7z x core.tar.xz -so | 7z x -ttar -si -oTrendGovernorLiveCoreV2 -y
+          python -c "import base64,tarfile,pathlib; p=pathlib.Path('.tgpayload/core.tar.xz.b64'); raw=base64.b64decode(p.read_text()); pathlib.Path('core.tar.xz').write_bytes(raw); pathlib.Path('TrendGovernorLiveCoreV2').mkdir(exist_ok=True); tarfile.open('core.tar.xz','r:xz').extractall('TrendGovernorLiveCoreV2')"
           if (-not (Test-Path 'TrendGovernorLiveCoreV2/src/TrendGovernor.Wpf/TrendGovernor.Wpf.csproj')) { throw 'WPF project not found after payload extraction.' }
 
       - name: Setup .NET 10

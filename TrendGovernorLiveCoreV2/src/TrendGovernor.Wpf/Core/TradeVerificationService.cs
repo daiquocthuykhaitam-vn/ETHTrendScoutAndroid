@@ -2,6 +2,10 @@ namespace TrendGovernor.Wpf;
 
 public sealed class TradeVerificationService
 {
+    private const int RequiredStableCycles = 1;
+    private const int MinimumScore = 75;
+    private const decimal MinimumRiskReward = 1.80m;
+
     public VerifyGrant Verify(
         CandidateRecord candidate,
         FrozenTradePlan plan,
@@ -22,6 +26,11 @@ public sealed class TradeVerificationService
         ArgumentNullException.ThrowIfNull(market);
         ArgumentNullException.ThrowIfNull(rules);
 
+        var entryBand = Math.Abs(plan.EntryHigh - plan.EntryLow);
+        var entryTolerance = Math.Max(currentPrice * 0.0015m, entryBand * 0.50m);
+        var entryWindowPassed = currentPrice >= plan.EntryLow - entryTolerance &&
+                                currentPrice <= plan.EntryHigh + entryTolerance;
+
         var gates = new List<VerifyGateResult>
         {
             Gate("SYSTEM_ENTRY_LOCK", !newEntriesBlocked, newEntriesBlocked ? "Hệ thống đang khóa lệnh mới." : "Không có khóa lệnh mới."),
@@ -33,11 +42,12 @@ public sealed class TradeVerificationService
             Gate("PLAN_DIRECTION", plan.Direction is "LONG" or "SHORT", $"Direction: {plan.Direction}."),
             Gate("TREND_ALIGNMENT", market.Trend1D == market.Trend4H && market.Trend4H == market.Trend1H && market.Trend1H is "TĂNG" or "GIẢM",
                 $"Trend 1D/4H/1H: {market.Trend1D}/{market.Trend4H}/{market.Trend1H}."),
-            Gate("CANDIDATE_STABILITY", candidate.StableCycles >= 2, $"Ổn định {candidate.StableCycles} chu kỳ."),
-            Gate("MINIMUM_SCORE", plan.Score >= 80, $"Score {plan.Score}/100."),
-            Gate("MINIMUM_RR", plan.RiskReward >= 2m, $"RR {plan.RiskReward:0.00}."),
-            Gate("ENTRY_WINDOW", currentPrice >= plan.EntryLow && currentPrice <= plan.EntryHigh,
-                $"Giá {currentPrice:0.########}; vùng {plan.EntryLow:0.########}-{plan.EntryHigh:0.########}."),
+            Gate("CANDIDATE_STABILITY", candidate.StableCycles >= RequiredStableCycles,
+                $"Ổn định {candidate.StableCycles}/{RequiredStableCycles} chu kỳ."),
+            Gate("MINIMUM_SCORE", plan.Score >= MinimumScore, $"Score {plan.Score}/{MinimumScore}."),
+            Gate("MINIMUM_RR", plan.RiskReward >= MinimumRiskReward, $"RR {plan.RiskReward:0.00}/{MinimumRiskReward:0.00}."),
+            Gate("ENTRY_WINDOW", entryWindowPassed,
+                $"Giá {currentPrice:0.########}; vùng {plan.EntryLow:0.########}-{plan.EntryHigh:0.########}; dung sai {entryTolerance:0.########}."),
             Gate("SL_TP_GEOMETRY", ValidProtectionGeometry(plan.Direction, currentPrice, plan.StopLoss, plan.TakeProfit),
                 $"SL {plan.StopLoss:0.########}; TP {plan.TakeProfit:0.########}."),
             Gate("FUNDING_NOT_BLOCKED", !market.FundingWarning.StartsWith("BLOCK:", StringComparison.OrdinalIgnoreCase),
@@ -45,7 +55,7 @@ public sealed class TradeVerificationService
             Gate("ONE_WAY_MODE", accountIsOneWay, accountIsOneWay ? "One-way Mode." : "Tài khoản đang Hedge Mode."),
             Gate("ISOLATED_READY", isolatedReady, isolatedReady ? "ISOLATED sẵn sàng." : "Chưa xác minh ISOLATED."),
             Gate("POSITION_CAPACITY", currentPositionCount < Math.Max(1, maxPositions),
-                $"Vị thế {currentPositionCount}/{Math.Max(1, maxPositions)}."),
+                $"Vị thế bot phiên hiện tại {currentPositionCount}/{Math.Max(1, maxPositions)}."),
             Gate("QUANTITY_VALID", normalizedQuantity > 0m, $"Quantity chuẩn hóa: {normalizedQuantity:0.########}."),
             Gate("MIN_NOTIONAL", rules.MinNotional <= 0m || normalizedQuantity * currentPrice >= rules.MinNotional,
                 $"Notional {normalizedQuantity * currentPrice:0.########}; minimum {rules.MinNotional:0.########}."),

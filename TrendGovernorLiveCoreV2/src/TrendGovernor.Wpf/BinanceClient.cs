@@ -9,6 +9,7 @@ namespace TrendGovernor.Wpf;
 public sealed class BinanceClient
 {
     private readonly HttpClient _http = new() { BaseAddress = new Uri("https://fapi.binance.com") };
+    private readonly FundingIntelligenceService _funding = new();
     private string _apiKey = "";
     private string _apiSecret = "";
 
@@ -18,6 +19,7 @@ public sealed class BinanceClient
     {
         _apiKey = apiKey.Trim();
         _apiSecret = apiSecret.Trim();
+        _funding.SetCredentials(_apiKey, _apiSecret);
     }
 
     public async Task<List<MarketRow>> LoadTopMarketsAsync(CancellationToken ct)
@@ -25,7 +27,7 @@ public sealed class BinanceClient
         using var res = await _http.GetAsync("/fapi/v1/ticker/24hr", ct);
         res.EnsureSuccessStatusCode();
         using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
-        return doc.RootElement.EnumerateArray()
+        var rows = doc.RootElement.EnumerateArray()
             .Where(x => x.GetProperty("symbol").GetString()?.EndsWith("USDT", StringComparison.Ordinal) == true)
             .Select(x => new MarketRow
             {
@@ -38,6 +40,9 @@ public sealed class BinanceClient
             .OrderByDescending(x => x.QuoteVolume)
             .Take(40)
             .ToList();
+
+        await _funding.EnrichMarketsAsync(rows, plannedNotional: 0m, ct);
+        return rows;
     }
 
     public async Task AnalyzeAsync(MarketRow row, CancellationToken ct)
@@ -103,6 +108,7 @@ public sealed class BinanceClient
             var reward = row.Direction == "LONG" ? row.TakeProfit - row.EntryHigh : row.EntryLow - row.TakeProfit;
             row.RiskReward = risk > 0 ? reward / risk : 0;
         }
+        FundingIntelligenceService.ApplyFundingDecision(row, 0m);
     }
 
     public async Task<AccountState> GetAccountAsync(CancellationToken ct)
@@ -119,7 +125,7 @@ public sealed class BinanceClient
     public async Task<List<PositionRow>> GetPositionsAsync(CancellationToken ct)
     {
         using var doc = await SignedAsync(HttpMethod.Get, "/fapi/v3/positionRisk", new(), ct);
-        return doc.RootElement.EnumerateArray()
+        var rows = doc.RootElement.EnumerateArray()
             .Select(x => new PositionRow
             {
                 Symbol = x.GetProperty("symbol").GetString() ?? "",
@@ -131,6 +137,9 @@ public sealed class BinanceClient
             .Where(x => x.Quantity != 0)
             .Select(x => { x.Side = x.Quantity > 0 ? "LONG" : "SHORT"; x.Quantity = Math.Abs(x.Quantity); return x; })
             .ToList();
+
+        await _funding.EnrichPositionsAsync(rows, ct);
+        return rows;
     }
 
     public async Task<List<OrderRow>> GetOpenOrdersAsync(CancellationToken ct)
@@ -187,12 +196,12 @@ public sealed class BinanceClient
     }
 
     public async Task SetLeverageAsync(string symbol, int leverage, CancellationToken ct)
-        => (await SignedAsync(HttpMethod.Post, "/fapi/v1/leverage", new() { ["symbol"] = symbol, ["leverage"] = leverage.ToString() }, ct)).Dispose();
+        => (await SignedAsync(HttpMethod.Post, "/fapi/v1/leverage", new() { ["symbol"] = symbol, ["leverage"] = leverage.ToString(CultureInfo.InvariantCulture) }, ct)).Dispose();
 
     private async Task<JsonDocument> SignedAsync(HttpMethod method, string path, Dictionary<string, string> p, CancellationToken ct)
     {
         if (!HasCredentials) throw new InvalidOperationException("Chưa nhập API Key/Secret.");
-        p["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
+        p["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
         p["recvWindow"] = "5000";
         string query = string.Join("&", p.OrderBy(x => x.Key).Select(x => $"{Uri.EscapeDataString(x.Key)}={Uri.EscapeDataString(x.Value)}"));
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(_apiSecret));
@@ -227,6 +236,11 @@ public sealed class BinanceClient
     }
 
     private static decimal Decimal(JsonElement x, string name)
-        => decimal.TryParse(x.GetProperty(name).GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var v) ? v : 0;
+    {
+        if (!x.TryGetProperty(name, out var value)) return 0m;
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetDecimal(out var number)) return number;
+        return decimal.TryParse(value.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var v) ? v : 0m;
+    }
+
     private static string F(decimal v) => v.ToString("0.########", CultureInfo.InvariantCulture);
 }

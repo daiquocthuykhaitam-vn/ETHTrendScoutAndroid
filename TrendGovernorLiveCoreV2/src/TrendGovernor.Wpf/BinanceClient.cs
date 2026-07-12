@@ -148,6 +148,7 @@ public sealed class BinanceClient
         return doc.RootElement.EnumerateArray().Select(x => new OrderRow
         {
             OrderId = x.GetProperty("orderId").GetInt64(),
+            ClientOrderId = x.TryGetProperty("clientOrderId", out var clientId) ? clientId.GetString() ?? "" : "",
             Symbol = x.GetProperty("symbol").GetString() ?? "",
             Type = x.GetProperty("type").GetString() ?? "",
             Side = x.GetProperty("side").GetString() ?? "",
@@ -155,48 +156,10 @@ public sealed class BinanceClient
             StopPrice = Decimal(x, "stopPrice"),
             Quantity = Decimal(x, "origQty"),
             Status = x.GetProperty("status").GetString() ?? "",
-            ReduceOnly = x.TryGetProperty("reduceOnly", out var r) && r.GetBoolean()
+            ReduceOnly = x.TryGetProperty("reduceOnly", out var r) && r.GetBoolean(),
+            IsAlgo = false
         }).ToList();
     }
-
-    public async Task<long> PlaceMarketAsync(string symbol, string side, decimal quantity, CancellationToken ct)
-    {
-        var p = new Dictionary<string, string>
-        {
-            ["symbol"] = symbol,
-            ["side"] = side,
-            ["type"] = "MARKET",
-            ["quantity"] = F(quantity),
-            ["newOrderRespType"] = "RESULT"
-        };
-        using var doc = await SignedAsync(HttpMethod.Post, "/fapi/v1/order", p, ct);
-        return doc.RootElement.GetProperty("orderId").GetInt64();
-    }
-
-    public async Task PlaceProtectionAsync(string symbol, string exitSide, decimal quantity, decimal stop, decimal takeProfit, CancellationToken ct)
-    {
-        var common = new Dictionary<string, string>
-        {
-            ["symbol"] = symbol,
-            ["side"] = exitSide,
-            ["quantity"] = F(quantity),
-            ["reduceOnly"] = "true",
-            ["workingType"] = "MARK_PRICE"
-        };
-        var sl = new Dictionary<string, string>(common)
-        {
-            ["type"] = "STOP_MARKET", ["stopPrice"] = F(stop)
-        };
-        var tp = new Dictionary<string, string>(common)
-        {
-            ["type"] = "TAKE_PROFIT_MARKET", ["stopPrice"] = F(takeProfit)
-        };
-        using var _ = await SignedAsync(HttpMethod.Post, "/fapi/v1/order", sl, ct);
-        using var __ = await SignedAsync(HttpMethod.Post, "/fapi/v1/order", tp, ct);
-    }
-
-    public async Task SetLeverageAsync(string symbol, int leverage, CancellationToken ct)
-        => (await SignedAsync(HttpMethod.Post, "/fapi/v1/leverage", new() { ["symbol"] = symbol, ["leverage"] = leverage.ToString(CultureInfo.InvariantCulture) }, ct)).Dispose();
 
     private async Task<JsonDocument> SignedAsync(HttpMethod method, string path, Dictionary<string, string> p, CancellationToken ct)
     {
@@ -241,6 +204,4 @@ public sealed class BinanceClient
         if (value.ValueKind == JsonValueKind.Number && value.TryGetDecimal(out var number)) return number;
         return decimal.TryParse(value.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var v) ? v : 0m;
     }
-
-    private static string F(decimal v) => v.ToString("0.########", CultureInfo.InvariantCulture);
 }

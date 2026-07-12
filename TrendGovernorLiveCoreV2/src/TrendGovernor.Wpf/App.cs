@@ -22,6 +22,7 @@ public static class AppEntry
             window.InitializeCredentialThemeAndFundingUi();
             window.InitializeTerminalCompletionUi();
             window.InitializePack14Ui();
+            window.InitializeLiveRuntimeSettingsUi();
 
             app.Run(window);
             WriteLog("EXIT", "Ứng dụng đã đóng bình thường.");

@@ -29,7 +29,9 @@ public sealed class BinanceCandleService
             .Where(item => item.GetArrayLength() > 6 && item[6].GetInt64() < nowMs)
             .Select(item => new CandlePoint
             {
-                OpenTime = DateTimeOffset.FromUnixTimeMilliseconds(item[0].GetInt64()).LocalDateTime,
+                OpenTime = DateTimeOffset.FromUnixTimeMilliseconds(item[0].GetInt64()).UtcDateTime,
+                CloseTime = DateTimeOffset.FromUnixTimeMilliseconds(item[6].GetInt64()).UtcDateTime,
+                IsClosed = true,
                 Open = Parse(item[1]),
                 High = Parse(item[2]),
                 Low = Parse(item[3]),

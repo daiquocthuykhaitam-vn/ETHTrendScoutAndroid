@@ -1,4 +1,4 @@
-name: TrendGovernor Windows Build 08 Baseline Terminal
+name: TrendGovernor Windows Build 11 Professional Terminal
 
 on:
   pull_request:
@@ -23,15 +23,25 @@ jobs:
 
       - name: Restore
         shell: pwsh
-        run: dotnet restore 'TrendGovernorLiveCoreV2/src/TrendGovernor.Wpf/TrendGovernor.Wpf.csproj' -r win-x64
+        run: dotnet restore 'TrendGovernorLiveCoreV2/src/TrendGovernor.Wpf/TrendGovernor.Wpf.csproj' -r win-x64 --verbosity quiet
 
       - name: Build
         shell: pwsh
-        run: dotnet build 'TrendGovernorLiveCoreV2/src/TrendGovernor.Wpf/TrendGovernor.Wpf.csproj' -c Release -r win-x64 --no-restore
+        run: |
+          $project = 'TrendGovernorLiveCoreV2/src/TrendGovernor.Wpf/TrendGovernor.Wpf.csproj'
+          dotnet build $project -c Release -r win-x64 --no-restore --verbosity minimal 2>&1 | Tee-Object -FilePath build.log
+          $exit = $LASTEXITCODE
+          if ($exit -ne 0) {
+            Write-Host '===== BUILD ERRORS ====='
+            Select-String -Path build.log -Pattern ': error ' | ForEach-Object { Write-Host $_.Line }
+            Write-Host '===== BUILD LOG TAIL ====='
+            Get-Content build.log -Tail 80
+            exit $exit
+          }
 
       - name: Publish Windows x64
         shell: pwsh
-        run: dotnet publish 'TrendGovernorLiveCoreV2/src/TrendGovernor.Wpf/TrendGovernor.Wpf.csproj' -c Release -r win-x64 --self-contained true --no-restore -o 'TrendGovernorLiveCoreV2/release' /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true
+        run: dotnet publish 'TrendGovernorLiveCoreV2/src/TrendGovernor.Wpf/TrendGovernor.Wpf.csproj' -c Release -r win-x64 --self-contained true --no-restore -o 'TrendGovernorLiveCoreV2/release' /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true --verbosity quiet
 
       - name: Verify executable
         shell: pwsh
@@ -71,12 +81,12 @@ jobs:
         run: |
           Copy-Item 'TrendGovernorLiveCoreV2/START_TOOL.cmd' 'TrendGovernorLiveCoreV2/release/START_TOOL.cmd' -Force
           New-Item -ItemType Directory -Path 'TrendGovernorLiveCoreV2/release/logs' -Force | Out-Null
-          Compress-Archive -Path 'TrendGovernorLiveCoreV2/release/*' -DestinationPath 'TRENDGOVERNOR_WINDOWS_X64_BUILD_08_BASELINE_TERMINAL.zip' -Force
+          Compress-Archive -Path 'TrendGovernorLiveCoreV2/release/*' -DestinationPath 'TRENDGOVERNOR_WINDOWS_X64_BUILD_11_PROFESSIONAL_TERMINAL.zip' -Force
 
       - name: Upload Windows release
         uses: actions/upload-artifact@v4
         with:
-          name: TRENDGOVERNOR_WINDOWS_X64_BUILD_08_BASELINE_TERMINAL
-          path: TRENDGOVERNOR_WINDOWS_X64_BUILD_08_BASELINE_TERMINAL.zip
+          name: TRENDGOVERNOR_WINDOWS_X64_BUILD_11_PROFESSIONAL_TERMINAL
+          path: TRENDGOVERNOR_WINDOWS_X64_BUILD_11_PROFESSIONAL_TERMINAL.zip
           if-no-files-found: error
           retention-days: 30

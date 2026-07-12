@@ -74,6 +74,7 @@ public sealed class CandlePoint
 public sealed class PositionRow
 {
     public string Symbol { get; set; } = "";
+    public string Owner { get; set; } = "MỞ TAY";
     public string Side { get; set; } = "";
     public decimal Quantity { get; set; }
     public decimal EntryPrice { get; set; }
@@ -91,6 +92,8 @@ public sealed class PositionRow
     public decimal PeakUnrealizedPnl { get; set; }
     public decimal PeakNetPnl { get; set; }
     public decimal GivebackPercent { get; set; }
+    public bool StopLossConfirmed { get; set; }
+    public bool TakeProfitConfirmed { get; set; }
     public string Protection { get; set; } = "CHƯA XÁC MINH";
     public string Health { get; set; } = "CHƯA ĐÁNH GIÁ";
     public string Recommendation { get; set; } = "THEO DÕI";
@@ -99,6 +102,7 @@ public sealed class PositionRow
 public sealed class OrderRow
 {
     public long OrderId { get; set; }
+    public string ClientOrderId { get; set; } = "";
     public string Symbol { get; set; } = "";
     public string Type { get; set; } = "";
     public string Side { get; set; } = "";
@@ -108,6 +112,7 @@ public sealed class OrderRow
     public string Status { get; set; } = "";
     public bool ReduceOnly { get; set; }
     public bool IsAlgo { get; set; }
+    public string Source => IsAlgo ? "ALGO" : "ORDER";
 }
 
 public sealed class FundingIncomeRow

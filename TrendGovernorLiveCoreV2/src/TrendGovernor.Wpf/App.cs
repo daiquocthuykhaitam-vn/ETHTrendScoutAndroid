@@ -20,6 +20,7 @@ public static class AppEntry
             var window = new MainWindow();
             window.InitializeFundingUi();
             window.InitializeCredentialThemeAndFundingUi();
+            window.InitializeTerminalCompletionUi();
 
             app.Run(window);
             WriteLog("EXIT", "Ứng dụng đã đóng bình thường.");

@@ -10,7 +10,7 @@ public sealed class MarketRow
     public decimal QuoteVolume { get; set; }
 
     public string CandidateId { get; set; } = "";
-    public string CandidateStage { get; set; } = global::TrendGovernor.Wpf.CandidateStage.Discovered.ToString();
+    public string CandidateStage { get; set; } = "Discovered";
     public int DecisionVersion { get; set; }
     public string SourceSnapshotId { get; set; } = "";
 
@@ -223,3 +223,33 @@ public sealed class ProtectionVerification
     public long TakeProfitAlgoId { get; init; }
     public bool IsProtected => StopLossConfirmed && TakeProfitConfirmed;
 }
+
+public sealed class LifecycleBoardRow
+{
+    public string Symbol { get; init; } = "";
+    public string CandidateId { get; init; } = "";
+    public string Stage { get; init; } = "";
+    public int StableCycles { get; init; }
+    public int DecisionVersion { get; init; }
+    public string Reason { get; init; } = "";
+    public DateTimeOffset LastSeen { get; init; }
+}
+
+public sealed class VerifyMatrixRow
+{
+    public string Symbol { get; init; } = "";
+    public string PlanId { get; init; } = "";
+    public string GrantId { get; init; } = "";
+    public string GateCode { get; init; } = "";
+    public bool Passed { get; init; }
+    public string Reason { get; init; } = "";
+    public DateTimeOffset IssuedAt { get; init; }
+}
+
+public sealed record MissedOpportunityRecord(
+    DateTimeOffset Time,
+    string Symbol,
+    string CandidateId,
+    string Stage,
+    string ReasonCode,
+    string Detail);

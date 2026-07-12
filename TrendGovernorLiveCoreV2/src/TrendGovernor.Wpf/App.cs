@@ -21,6 +21,7 @@ public static class AppEntry
             window.InitializeFundingUi();
             window.InitializeCredentialThemeAndFundingUi();
             window.InitializeTerminalCompletionUi();
+            window.InitializePack14Ui();
 
             app.Run(window);
             WriteLog("EXIT", "Ứng dụng đã đóng bình thường.");
@@ -67,9 +68,7 @@ public static class AppEntry
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
         }
-        catch
-        {
-        }
+        catch { }
     }
 
     private static string CrashLogPath => Path.Combine(AppContext.BaseDirectory, "logs", "startup-crash.log");
@@ -82,8 +81,6 @@ public static class AppEntry
             Directory.CreateDirectory(directory);
             File.AppendAllText(CrashLogPath, $"{DateTime.Now:O} [{area}] {message}{Environment.NewLine}");
         }
-        catch
-        {
-        }
+        catch { }
     }
 }

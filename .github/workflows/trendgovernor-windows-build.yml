@@ -82,6 +82,7 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item 'TrendGovernorLiveCoreV2/START_TOOL.cmd' 'TrendGovernorLiveCoreV2/release/START_TOOL.cmd' -Force
+          Copy-Item 'TrendGovernorLiveCoreV2/SAVE_API_ONCE.ps1' 'TrendGovernorLiveCoreV2/release/SAVE_API_ONCE.ps1' -Force
           New-Item -ItemType Directory -Path 'TrendGovernorLiveCoreV2/release/logs' -Force | Out-Null
           Compress-Archive -Path 'TrendGovernorLiveCoreV2/release/*' -DestinationPath 'TRENDGOVERNOR_WINDOWS_X64_BUILD_11_PROFESSIONAL_TERMINAL.zip' -Force
 

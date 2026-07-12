@@ -9,6 +9,11 @@ public sealed class MarketRow
     public decimal Change24h { get; set; }
     public decimal QuoteVolume { get; set; }
 
+    public string CandidateId { get; set; } = "";
+    public string CandidateStage { get; set; } = CandidateStage.Discovered.ToString();
+    public int DecisionVersion { get; set; }
+    public string SourceSnapshotId { get; set; } = "";
+
     public string Direction { get; set; } = "WAIT";
     public int Score { get; set; }
     public string Status { get; set; } = "CHỜ";

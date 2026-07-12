@@ -15,7 +15,7 @@ public sealed partial class MainWindow
     private readonly Dictionary<string, FrozenTradePlan> _activePlans = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, decimal> _peakNetPnl = new(StringComparer.OrdinalIgnoreCase);
     private readonly Pack14Runtime _pack14 = new(AppContext.BaseDirectory, SessionOwnershipRegistry.SessionId);
-    private readonly TradingConfig _pack14Config = new();
+    private readonly TradingConfig _pack14Config = new() { MarginPerTrade = 2m, Leverage = 3, MaxPositions = 5 };
     private readonly AnalysisBundleExporter _bundleExporter = new();
 
     private readonly TextBlock _autoState = T("AUTO LIVE: DỪNG", 16, Brushes.Gold, true);
@@ -42,8 +42,23 @@ public sealed partial class MainWindow
         panel.Children.Add(Btn("QUÉT THỦ CÔNG", "#275A8C", async (_, _) => await RunAutoCycleAsync(true, _cts.Token)));
         panel.Children.Add(Btn("TẠO ZIP PHÂN TÍCH", "#5B4BB7", async (_, _) => await ExportAnalysisBundleAsync()));
         panel.Children.Add(T("AUTO LIVE: Universe 40 → Lifecycle → Plan → VerifyGrant → OrderIntent → Execute → Fill → Protect → Manage.", 11, B("#7F9AB5")));
-        panel.Children.Add(T("SỞ HỮU: chỉ BOT PHIÊN HIỆN TẠI được quản lý/đóng. Vị thế có sẵn, mở tay và bot phiên cũ luôn chỉ đọc.", 11, B("#66D49A"), true));
+        panel.Children.Add(T("SỞ HỮU: chỉ BOT PHIÊN HIỆN TẠI được quản lý/đóng. Vị thế có sẵn, mở tay và bot phiên cũ luôn chỉ đọc, không chiếm capacity bot.", 11, B("#66D49A"), true));
         return panel;
+    }
+
+    private void ReadLiveSettings()
+    {
+        if (!decimal.TryParse(_margin.Text, NumberStyles.Any, CultureInfo.InvariantCulture, out var margin) || margin <= 0m || margin > 100m)
+            throw new InvalidOperationException("Margin mỗi lệnh phải lớn hơn 0 và không vượt 100 USDT.");
+        if (!int.TryParse(_leverage.Text, out var leverage) || leverage is < 1 or > 20)
+            throw new InvalidOperationException("Đòn bẩy phải từ 1x đến 20x.");
+        if (!int.TryParse(_maxBotPositions.Text, out var maxBotPositions) || maxBotPositions is < 1 or > 10)
+            throw new InvalidOperationException("Số vị thế bot tối đa phải từ 1 đến 10.");
+
+        _pack14Config.MarginPerTrade = margin;
+        _pack14Config.Leverage = leverage;
+        _pack14Config.MaxPositions = maxBotPositions;
+        _pack14Config.AutoLiveEnabled = true;
     }
 
     private async void StartAutoLiveClicked(object sender, RoutedEventArgs e)
@@ -53,14 +68,8 @@ public sealed partial class MainWindow
             if (_autoLoopTask is { IsCompleted: false }) return;
             if (!CredentialRules.IsUsable(_apiKey.Text) || !CredentialRules.IsUsable(_apiSecret.Password))
                 throw new InvalidOperationException("API Key/Secret chưa hợp lệ hoặc vẫn là placeholder.");
-            if (!decimal.TryParse(_margin.Text, NumberStyles.Any, CultureInfo.InvariantCulture, out var margin) || margin <= 0m || margin > 5m)
-                throw new InvalidOperationException("Margin mỗi lệnh phải lớn hơn 0 và không vượt 5 USDT ở giai đoạn hiện tại.");
-            if (!int.TryParse(_leverage.Text, out var leverage) || leverage is < 1 or > 5)
-                throw new InvalidOperationException("Đòn bẩy giai đoạn hiện tại chỉ cho phép 1x–5x.");
 
-            _pack14Config.MarginPerTrade = margin;
-            _pack14Config.Leverage = leverage;
-            _pack14Config.AutoLiveEnabled = true;
+            ReadLiveSettings();
             _binance.SetCredentials(_apiKey.Text, _apiSecret.Password);
             _execution.SetCredentials(_apiKey.Text, _apiSecret.Password);
             _fundingIntel.SetCredentials(_apiKey.Text, _apiSecret.Password);
@@ -80,12 +89,14 @@ public sealed partial class MainWindow
             _autoState.Foreground = Brushes.LimeGreen;
             _startAutoButton.IsEnabled = false;
             _emergencyStopButton.IsEnabled = true;
-            Log("AUTO", $"Bắt đầu Pack 14; session {_pack14.SessionId}; margin {margin:0.##} USDT, leverage {leverage}x.");
+            SetEntryBlocker("ĐANG QUÉT", "Chờ Radar tìm ứng viên đạt soft-gate LIVE.", Brushes.LimeGreen);
+            Log("AUTO", $"Bắt đầu Pack 14; session {_pack14.SessionId}; margin {_pack14Config.MarginPerTrade:0.##} USDT, leverage {_pack14Config.Leverage}x, max bot positions {_pack14Config.MaxPositions}. Vị thế tay không tính capacity.");
         }
         catch (Exception ex)
         {
             _autoState.Text = "AUTO LIVE: KHÔNG THỂ KHỞI ĐỘNG";
             _autoState.Foreground = Brushes.OrangeRed;
+            SetEntryBlocker("AUTO_START", ex.Message, Brushes.OrangeRed);
             AddAlert("AUTO START", ex.Message);
             MessageBox.Show(ex.Message, "AUTO LIVE", MessageBoxButton.OK, MessageBoxImage.Error);
         }
@@ -99,15 +110,14 @@ public sealed partial class MainWindow
         _autoState.Foreground = Brushes.OrangeRed;
         _startAutoButton.IsEnabled = true;
         _emergencyStopButton.IsEnabled = false;
+        SetEntryBlocker("EMERGENCY_STOP", "Đã khóa lệnh mới; chỉ đóng BOT PHIÊN HIỆN TẠI.", Brushes.OrangeRed);
         Log("EMERGENCY", "Đã khóa lệnh mới. Chỉ xử lý BOT PHIÊN HIỆN TẠI.");
 
         try
         {
             await RefreshPrivateAsync(_cts.Token);
             foreach (var position in _state.Positions.Where(p => SessionOwnershipRegistry.IsCurrentSessionBotOwned(p.Symbol)).ToList())
-            {
                 await CloseOwnedPositionAndVerifyAsync(position, "EMERGENCY_STOP", _cts.Token);
-            }
             await RefreshPrivateAsync(_cts.Token);
         }
         catch (Exception ex)
@@ -128,6 +138,7 @@ public sealed partial class MainWindow
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
             catch (Exception ex)
             {
+                SetEntryBlocker("AUTO_LOOP_ERROR", ex.Message, Brushes.OrangeRed);
                 AddAlert("AUTO LOOP", ex.Message);
                 Log("AUTO LOOP", ex.ToString());
                 await Task.Delay(TimeSpan.FromSeconds(15), ct);
@@ -140,6 +151,7 @@ public sealed partial class MainWindow
         if (!await _autoCycleGate.WaitAsync(0, ct)) return;
         try
         {
+            ReadLiveSettings();
             SetStatus("AUTO: TẠO UNIVERSE 40 COIN", Brushes.Gold);
             var markets = await _binance.LoadTopMarketsAsync(ct);
             _state.Markets.Clear();
@@ -196,31 +208,49 @@ public sealed partial class MainWindow
             _marketGrid.Items.Refresh();
             _radarGrid.Items.Refresh();
 
-            var eligible = ordered.Count(x => x.CandidateStage == CandidateStage.PlanReady.ToString());
-            _candidateCount.Text = eligible.ToString(CultureInfo.InvariantCulture);
+            var planReady = ordered.Count(x => x.CandidateStage == CandidateStage.PlanReady.ToString());
+            _candidateCount.Text = planReady.ToString(CultureInfo.InvariantCulture);
             var selected = ordered.FirstOrDefault(x => x.CandidateStage == CandidateStage.PlanReady.ToString()) ?? ordered.FirstOrDefault();
             if (selected != null) await SelectCandidateAsync(selected);
-            Log("RADAR", $"Universe {ordered.Count}; PlanReady {eligible}; snapshot {snapshotId}.");
+            Log("RADAR", $"Universe {ordered.Count}; PlanReady {planReady}; snapshot {snapshotId}.");
 
             if (_binance.HasCredentials) await RefreshPrivateAsync(ct);
             await MonitorOpenPositionsAsync(ct);
 
-            if (manualOnly || _blockNewEntries) return;
-            if (_state.Positions.Count >= _pack14Config.MaxPositions)
+            if (manualOnly)
             {
-                SetStatus("AUTO: ĐANG QUẢN LÝ VỊ THẾ", Brushes.LightSkyBlue);
+                SetEntryBlocker("QUÉT THỦ CÔNG", "Đã cập nhật Radar; quét tay không gửi lệnh.");
+                return;
+            }
+            if (_blockNewEntries)
+            {
+                SetEntryBlocker("SYSTEM_ENTRY_LOCK", "Hệ thống đang khóa lệnh mới.", Brushes.OrangeRed);
+                return;
+            }
+
+            var botPositionCount = CurrentSessionBotPositionCount();
+            if (botPositionCount >= _pack14Config.MaxPositions)
+            {
+                SetEntryBlocker("BOT_CAPACITY", $"Bot phiên hiện tại {botPositionCount}/{_pack14Config.MaxPositions}. Vị thế tay không được tính.", Brushes.LightSkyBlue);
                 return;
             }
 
             var candidate = ordered.FirstOrDefault(x => x.CandidateStage == CandidateStage.PlanReady.ToString());
-            if (candidate == null)
+            if (candidate is null)
             {
-                SetStatus("AUTO: CHƯA CÓ ỨNG VIÊN PLAN_READY", Brushes.Gold);
+                var closest = ordered
+                    .Where(x => x.LastAnalyzedUtc != default)
+                    .OrderByDescending(x => x.Score)
+                    .ThenByDescending(x => x.TrendScore)
+                    .ThenByDescending(x => x.WaveScore)
+                    .FirstOrDefault();
+                SetEntryBlocker(
+                    closest?.Status ?? "NO_PLAN_READY",
+                    closest is null ? "Không có dữ liệu ứng viên hợp lệ." : $"{closest.Symbol}: {closest.Reason}");
                 return;
             }
 
             await ExecuteAutoCandidateAsync(candidate, ct);
-            SetStatus("AUTO: HOÀN TẤT CHU KỲ", Brushes.LimeGreen);
         }
         finally { _autoCycleGate.Release(); }
     }
@@ -234,7 +264,19 @@ public sealed partial class MainWindow
         FrozenTradePlan? plan = null;
         try
         {
-            if (_blockNewEntries || _state.Positions.Count >= _pack14Config.MaxPositions) return;
+            ReadLiveSettings();
+            var botPositionCount = CurrentSessionBotPositionCount();
+            if (_blockNewEntries)
+            {
+                SetEntryBlocker("SYSTEM_ENTRY_LOCK", "Hệ thống đang khóa lệnh mới.", Brushes.OrangeRed);
+                return;
+            }
+            if (botPositionCount >= _pack14Config.MaxPositions)
+            {
+                SetEntryBlocker("BOT_CAPACITY", $"Bot phiên hiện tại {botPositionCount}/{_pack14Config.MaxPositions}. Vị thế tay không được tính.");
+                return;
+            }
+
             candidate = _pack14.FindCandidate(market.Symbol)
                 ?? throw new InvalidOperationException("Candidate lifecycle không tồn tại.");
             if (candidate.Stage != CandidateStage.PlanReady)
@@ -257,7 +299,7 @@ public sealed partial class MainWindow
                 quantity,
                 accountIsOneWay: true,
                 isolatedReady: true,
-                _state.Positions.Count,
+                botPositionCount,
                 _pack14Config.MaxPositions,
                 _blockNewEntries,
                 ct);
@@ -265,12 +307,16 @@ public sealed partial class MainWindow
 
             if (!grant.Passed)
             {
+                var failed = grant.Gates.Where(x => !x.Passed).ToList();
+                var finalGate = failed.LastOrDefault();
                 _pack14.RecordMissed(market.Symbol, candidate.CandidateId, candidate.Stage.ToString(), "VERIFY_BLOCKED",
-                    string.Join("; ", grant.Gates.Where(x => !x.Passed).Select(x => $"{x.GateCode}:{x.Reason}")));
-                Log("VERIFY", $"{market.Symbol}: BLOCK — {string.Join(", ", grant.Gates.Where(x => !x.Passed).Select(x => x.GateCode))}");
+                    string.Join("; ", failed.Select(x => $"{x.GateCode}:{x.Reason}")));
+                SetEntryBlocker(finalGate?.GateCode ?? "VERIFY_BLOCKED", $"{market.Symbol}: {finalGate?.Reason ?? "Không rõ lý do"}", Brushes.OrangeRed);
+                Log("VERIFY", $"{market.Symbol}: BLOCK — {string.Join(", ", failed.Select(x => x.GateCode))}");
                 return;
             }
 
+            SetEntryBlocker("VERIFY_PASS", $"{market.Symbol}: đang tạo OrderIntent và gửi MARKET.", Brushes.LimeGreen);
             intent = await _pack14.CreateIntentAsync(grant, plan, quantity, candidate, ct);
             await _pack14.MarkOrderSubmittedAsync(candidate, intent, ct);
             fill = await _execution.PlaceMarketAndWaitFillAsync(intent, ct);
@@ -290,12 +336,14 @@ public sealed partial class MainWindow
             if (!protection.IsProtected)
                 throw new InvalidOperationException("Không xác minh đủ SL/TP sau Fill.");
 
+            SetEntryBlocker("PROTECTED", $"{market.Symbol}: FILLED và đã xác minh SL/TP.", Brushes.LimeGreen);
             Log("PROTECT", $"{market.Symbol}: SL {protection.StopAlgoId}, TP {protection.TakeProfitAlgoId} đã xác minh.");
             await RefreshPrivateAsync(ct);
             SyncPack14UiState();
         }
         catch (Exception ex)
         {
+            SetEntryBlocker("AUTO_EXECUTION_ERROR", ex.Message, Brushes.OrangeRed);
             AddAlert("AUTO EXECUTION", ex.Message);
             Log("AUTO EXECUTION", ex.ToString());
             if (fill is { ExecutedQuantity: > 0m } && SessionOwnershipRegistry.IsCurrentSessionBotOwned(fill.Symbol))
@@ -332,16 +380,22 @@ public sealed partial class MainWindow
                     var retry = await _execution.PlaceAndVerifyProtectionAsync(fill.Symbol, plan.ExitSide, position.Quantity, stop, tp, ct);
                     var candidate = _pack14.FindCandidate(fill.Symbol);
                     if (candidate is not null) await _pack14.MarkProtectionAsync(candidate, intent?.OrderIntentId ?? fill.ClientOrderId, retry, ct);
-                    if (retry.IsProtected) return;
+                    if (retry.IsProtected)
+                    {
+                        SetEntryBlocker("PROTECTION_RECOVERED", $"{fill.Symbol}: retry SL/TP thành công.", Brushes.LimeGreen);
+                        return;
+                    }
                 }
                 catch (Exception retryEx) { Log("PROTECTION RETRY", retryEx.Message); }
             }
 
             await CloseOwnedPositionAndVerifyAsync(position, "UNPROTECTED_COMPENSATION", ct);
+            SetEntryBlocker("UNPROTECTED_CLOSED", $"{fill.Symbol}: đã đóng và xác minh position=0.", Brushes.OrangeRed);
             AddAlert("EMERGENCY_UNPROTECTED", $"{fill.Symbol}: đã đóng và xác minh sau lỗi protection: {cause.Message}");
         }
         catch (Exception closeEx)
         {
+            SetEntryBlocker("CRITICAL_CLOSE_FAILURE", $"{fill.Symbol}: {closeEx.Message}", Brushes.Red);
             AddAlert("CRITICAL_CLOSE_FAILURE", $"{fill.Symbol}: không xác minh được emergency close: {closeEx.Message}");
         }
     }

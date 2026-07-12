@@ -10,7 +10,7 @@ public sealed class MarketRow
     public decimal QuoteVolume { get; set; }
 
     public string CandidateId { get; set; } = "";
-    public string CandidateStage { get; set; } = CandidateStage.Discovered.ToString();
+    public string CandidateStage { get; set; } = global::TrendGovernor.Wpf.CandidateStage.Discovered.ToString();
     public int DecisionVersion { get; set; }
     public string SourceSnapshotId { get; set; } = "";
 

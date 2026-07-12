@@ -13,16 +13,16 @@ internal static class CredentialRules
         "YOUR_API_KEY", "YOUR_API_SECRET", "CHANGE_ME", "PLACEHOLDER"
     ];
 
-    public static bool IsUsable(string? apiKey, string? apiSecret)
+    public static bool IsUsable(string? value)
     {
-        if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(apiSecret)) return false;
-        apiKey = apiKey.Trim();
-        apiSecret = apiSecret.Trim();
-        if (apiKey.Length < 20 || apiSecret.Length < 20) return false;
-        return !PlaceholderTokens.Any(token =>
-            apiKey.Contains(token, StringComparison.OrdinalIgnoreCase) ||
-            apiSecret.Contains(token, StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        value = value.Trim();
+        if (value.Length < 20) return false;
+        return !PlaceholderTokens.Any(token => value.Contains(token, StringComparison.OrdinalIgnoreCase));
     }
+
+    public static bool IsUsable(string? apiKey, string? apiSecret)
+        => IsUsable(apiKey) && IsUsable(apiSecret);
 }
 
 internal static class LocalCredentialVault

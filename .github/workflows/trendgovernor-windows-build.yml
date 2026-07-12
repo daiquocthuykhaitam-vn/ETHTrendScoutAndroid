@@ -30,14 +30,16 @@ jobs:
         run: |
           $project = 'TrendGovernorLiveCoreV2/src/TrendGovernor.Wpf/TrendGovernor.Wpf.csproj'
           dotnet build $project -c Release -r win-x64 --no-restore --verbosity minimal 2>&1 | Tee-Object -FilePath build.log
-          $exit = $LASTEXITCODE
-          if ($exit -ne 0) {
-            Write-Host '===== BUILD ERRORS ====='
-            Select-String -Path build.log -Pattern ': error ' | ForEach-Object { Write-Host $_.Line }
-            Write-Host '===== BUILD LOG TAIL ====='
-            Get-Content build.log -Tail 80
-            exit $exit
-          }
+          exit $LASTEXITCODE
+
+      - name: Upload build diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TRENDGOVERNOR_BUILD_DIAGNOSTIC
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 3
 
       - name: Publish Windows x64
         shell: pwsh

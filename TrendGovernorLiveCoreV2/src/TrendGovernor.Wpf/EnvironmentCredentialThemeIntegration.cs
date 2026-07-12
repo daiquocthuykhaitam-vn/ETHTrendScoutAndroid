@@ -9,6 +9,7 @@ public sealed partial class MainWindow
 {
     internal void InitializeCredentialThemeAndFundingUi()
     {
+        Title = "TRENDGOVERNOR LIVE CORE V2 - BUILD 12 CLEAN TERMINAL";
         Loaded += (_, _) =>
         {
             var key = Environment.GetEnvironmentVariable("BINANCE_API_KEY", EnvironmentVariableTarget.User);
@@ -19,6 +20,7 @@ public sealed partial class MainWindow
                 _apiSecret.Password = secret;
                 _binance.SetCredentials(key, secret);
                 _execution.SetCredentials(key, secret);
+                _fundingIntel.SetCredentials(key, secret);
                 Log("SECURITY", "Đã tự nạp API từ biến môi trường Windows của tài khoản hiện tại.");
             }
             ApplyReadableGridTheme(this);

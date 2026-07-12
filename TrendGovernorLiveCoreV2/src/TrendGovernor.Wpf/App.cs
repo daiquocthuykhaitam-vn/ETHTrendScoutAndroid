@@ -16,7 +16,9 @@ public static class AppEntry
         {
             var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
             app.DispatcherUnhandledException += OnDispatcherUnhandledException;
-            app.Run(new MainWindow());
+            var window = new MainWindow();
+            window.InitializeFundingUi();
+            app.Run(window);
             WriteLog("EXIT", "Ứng dụng đã đóng bình thường.");
         }
         catch (Exception ex)
@@ -63,7 +65,6 @@ public static class AppEntry
         }
         catch
         {
-            // Không che mất lỗi gốc nếu MessageBox không thể hiển thị.
         }
     }
 
@@ -79,7 +80,6 @@ public static class AppEntry
         }
         catch
         {
-            // Startup logging must never create a second failure.
         }
     }
 }

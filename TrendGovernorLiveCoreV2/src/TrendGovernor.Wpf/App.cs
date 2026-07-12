@@ -23,6 +23,7 @@ public static class AppEntry
             window.InitializeTerminalCompletionUi();
             window.InitializePack14Ui();
             window.InitializeLiveRuntimeSettingsUi();
+            window.InitializeHardGridHeaderTheme();
 
             app.Run(window);
             WriteLog("EXIT", "Ứng dụng đã đóng bình thường.");

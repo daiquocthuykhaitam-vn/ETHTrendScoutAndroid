@@ -32,6 +32,8 @@ public enum LifecycleEventType
     OrderSubmitted,
     OrderPartiallyFilled,
     OrderFilled,
+    OrderCanceled,
+    OrderRejected,
     ProtectionRequested,
     ProtectionConfirmed,
     ProtectionFailed,
@@ -79,7 +81,6 @@ public sealed class CandidateRecord
     {
         if (!CandidateStagePolicy.CanTransition(Stage, next))
             throw new InvalidOperationException($"Candidate transition không hợp lệ: {Stage} -> {next}.");
-
         Stage = next;
         StageReason = string.IsNullOrWhiteSpace(reason) ? "UNSPECIFIED" : reason.Trim();
         DecisionVersion++;
@@ -91,7 +92,7 @@ public static class CandidateStagePolicy
     private static readonly IReadOnlyDictionary<CandidateStage, CandidateStage[]> Allowed =
         new Dictionary<CandidateStage, CandidateStage[]>
         {
-            [CandidateStage.Discovered] = [CandidateStage.Watching, CandidateStage.WaitingRetest, CandidateStage.PlanReady, CandidateStage.Rejected, CandidateStage.Expired],
+            [CandidateStage.Discovered] = [CandidateStage.Watching, CandidateStage.Rejected, CandidateStage.Expired],
             [CandidateStage.Watching] = [CandidateStage.WaitingRetest, CandidateStage.PlanReady, CandidateStage.Rejected, CandidateStage.Expired],
             [CandidateStage.WaitingRetest] = [CandidateStage.PlanReady, CandidateStage.Watching, CandidateStage.Rejected, CandidateStage.Expired],
             [CandidateStage.PlanReady] = [CandidateStage.Verifying, CandidateStage.WaitingRetest, CandidateStage.Rejected, CandidateStage.Expired],

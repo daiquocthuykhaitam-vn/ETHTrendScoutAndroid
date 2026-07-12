@@ -59,12 +59,12 @@ public sealed class CandidateRecord
     public string Symbol { get; init; } = string.Empty;
     public CandidateStage Stage { get; private set; } = CandidateStage.Discovered;
     public DateTimeOffset FirstSeen { get; init; }
-    public DateTimeOffset LastSeen { get; private set; }
+    public DateTimeOffset LastSeen { get; internal set; }
     public int StableCycles { get; private set; }
     public string StageReason { get; private set; } = "RADAR_DISCOVERED";
-    public DateTimeOffset ExpiresAt { get; private set; }
+    public DateTimeOffset ExpiresAt { get; internal set; }
     public int DecisionVersion { get; private set; }
-    public string SourceSnapshotId { get; private set; } = string.Empty;
+    public string SourceSnapshotId { get; internal set; } = string.Empty;
 
     public void Refresh(bool stable, string snapshotId, DateTimeOffset now, TimeSpan ttl)
     {
@@ -91,7 +91,7 @@ public static class CandidateStagePolicy
     private static readonly IReadOnlyDictionary<CandidateStage, CandidateStage[]> Allowed =
         new Dictionary<CandidateStage, CandidateStage[]>
         {
-            [CandidateStage.Discovered] = [CandidateStage.Watching, CandidateStage.Rejected, CandidateStage.Expired],
+            [CandidateStage.Discovered] = [CandidateStage.Watching, CandidateStage.WaitingRetest, CandidateStage.PlanReady, CandidateStage.Rejected, CandidateStage.Expired],
             [CandidateStage.Watching] = [CandidateStage.WaitingRetest, CandidateStage.PlanReady, CandidateStage.Rejected, CandidateStage.Expired],
             [CandidateStage.WaitingRetest] = [CandidateStage.PlanReady, CandidateStage.Watching, CandidateStage.Rejected, CandidateStage.Expired],
             [CandidateStage.PlanReady] = [CandidateStage.Verifying, CandidateStage.WaitingRetest, CandidateStage.Rejected, CandidateStage.Expired],

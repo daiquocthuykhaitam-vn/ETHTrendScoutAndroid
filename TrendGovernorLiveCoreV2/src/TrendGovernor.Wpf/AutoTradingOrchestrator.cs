@@ -14,7 +14,6 @@ public sealed partial class MainWindow
     private readonly SemaphoreSlim _autoExecutionGate = new(1, 1);
     private readonly Dictionary<string, int> _stableCandidateCycles = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, FrozenTradePlan> _activePlans = new(StringComparer.OrdinalIgnoreCase);
-    private readonly HashSet<string> _botOwnedSymbols = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, decimal> _peakNetPnl = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly TextBlock _autoState = T("AUTO LIVE: DỪNG", 16, Brushes.Gold, true);
@@ -40,6 +39,7 @@ public sealed partial class MainWindow
         panel.Children.Add(Btn("LÀM MỚI DỮ LIỆU", "#245EDB", (_, _) => _ = RefreshAllAsync()));
         panel.Children.Add(Btn("QUÉT THỦ CÔNG", "#275A8C", async (_, _) => await RunAutoCycleAsync(manualOnly: true, _cts.Token)));
         panel.Children.Add(T("AUTO LIVE tự chạy: đồng bộ → radar → plan → verify → execute → fill → protect → manage → radar.", 11, B("#7F9AB5")));
+        panel.Children.Add(T("QUYỀN SỞ HỮU: chỉ BOT PHIÊN HIỆN TẠI được quản lý/đóng. Vị thế có sẵn và mở tay luôn chỉ đọc.", 11, B("#66D49A"), true));
         return panel;
     }
 
@@ -74,7 +74,7 @@ public sealed partial class MainWindow
             _autoState.Foreground = Brushes.LimeGreen;
             _startAutoButton.IsEnabled = false;
             _emergencyStopButton.IsEnabled = true;
-            Log("AUTO", $"Bắt đầu AUTO LIVE; margin {margin:0.##} USDT, leverage {leverage}x.");
+            Log("AUTO", $"Bắt đầu AUTO LIVE; session {SessionOwnershipRegistry.SessionId}; margin {margin:0.##} USDT, leverage {leverage}x. Mọi vị thế có sẵn/mở tay là READ-ONLY.");
         }
         catch (Exception ex)
         {
@@ -93,16 +93,17 @@ public sealed partial class MainWindow
         _autoState.Foreground = Brushes.OrangeRed;
         _startAutoButton.IsEnabled = true;
         _emergencyStopButton.IsEnabled = false;
-        Log("EMERGENCY", "Đã khóa lệnh mới và dừng vòng AUTO.");
+        Log("EMERGENCY", "Đã khóa lệnh mới và dừng vòng AUTO. Chỉ đóng BOT PHIÊN HIỆN TẠI.");
 
         try
         {
             await RefreshPrivateAsync(_cts.Token);
-            foreach (var position in _state.Positions.Where(p => p.Owner == "BOT").ToList())
+            foreach (var position in _state.Positions.Where(p => SessionOwnershipRegistry.IsCurrentSessionBotOwned(p.Symbol)).ToList())
             {
                 var exitSide = position.Side == "LONG" ? "SELL" : "BUY";
                 await _execution.EmergencyCloseAsync(position.Symbol, exitSide, position.Quantity, _cts.Token);
-                Log("EMERGENCY", $"Đã gửi đóng reduce-only vị thế BOT {position.Symbol}.");
+                SessionOwnershipRegistry.Release(position.Symbol);
+                Log("EMERGENCY", $"Đã đóng reduce-only BOT PHIÊN HIỆN TẠI {position.Symbol}.");
             }
             await RefreshPrivateAsync(_cts.Token);
         }
@@ -231,7 +232,7 @@ public sealed partial class MainWindow
             if (manualOnly || _blockNewEntries) return;
             if (_state.Positions.Count >= 1)
             {
-                SetStatus("AUTO: ĐANG QUẢN LÝ VỊ THẾ", Brushes.LightSkyBlue);
+                SetStatus("AUTO: ĐANG QUẢN LÝ / QUAN SÁT VỊ THẾ", Brushes.LightSkyBlue);
                 return;
             }
 
@@ -295,7 +296,9 @@ public sealed partial class MainWindow
             var fill = await _execution.PlaceMarketAndWaitFillAsync(candidate.Symbol, plan.EntrySide, quantity, ct);
             if (fill.Status != "FILLED" || fill.ExecutedQuantity <= 0m || fill.AveragePrice <= 0m)
                 throw new InvalidOperationException("Không có FILL thật đầy đủ; không đặt protection theo phỏng đoán.");
-            Log("FILL", $"{candidate.Symbol}: FILLED {fill.ExecutedQuantity} @ {fill.AveragePrice:0.########}, order {fill.OrderId}.");
+
+            SessionOwnershipRegistry.RegisterFilled(candidate.Symbol, fill.ClientOrderId, fill.OrderId);
+            Log("FILL", $"{candidate.Symbol}: FILLED {fill.ExecutedQuantity} @ {fill.AveragePrice:0.########}, order {fill.OrderId}; ownership={SessionOwnershipRegistry.SessionId}.");
 
             if (candidate.Direction == "LONG" && !(stop < fill.AveragePrice && takeProfit > fill.AveragePrice))
                 throw new InvalidOperationException("Sau fill, SL/TP LONG không còn hợp lệ.");
@@ -307,13 +310,13 @@ public sealed partial class MainWindow
             {
                 _blockNewEntries = true;
                 await _execution.EmergencyCloseAsync(candidate.Symbol, plan.ExitSide, fill.ExecutedQuantity, ct);
-                AddAlert("EMERGENCY_UNPROTECTED", $"{candidate.Symbol}: không xác minh đủ SL/TP, đã gửi đóng reduce-only và khóa lệnh mới.");
+                SessionOwnershipRegistry.Release(candidate.Symbol);
+                AddAlert("EMERGENCY_UNPROTECTED", $"{candidate.Symbol}: BOT PHIÊN HIỆN TẠI không xác minh đủ SL/TP, đã đóng reduce-only và khóa lệnh mới.");
                 throw new InvalidOperationException("Protection không đầy đủ; đã kích hoạt emergency close.");
             }
 
-            _botOwnedSymbols.Add(candidate.Symbol);
             Log("PROTECT", $"{candidate.Symbol}: SL algo {protection.StopAlgoId}, TP algo {protection.TakeProfitAlgoId} đã xác minh NEW.");
-            var tradeLine = $"{DateTime.Now:HH:mm:ss} {candidate.Symbol} {candidate.Direction} {fill.ExecutedQuantity} @ {fill.AveragePrice:0.########} — PROTECTED{Environment.NewLine}";
+            var tradeLine = $"{DateTime.Now:HH:mm:ss} {candidate.Symbol} {candidate.Direction} {fill.ExecutedQuantity} @ {fill.AveragePrice:0.########} — BOT PHIÊN HIỆN TẠI — PROTECTED{Environment.NewLine}";
             _recentTrades.AppendText(tradeLine);
             _recentTradesFull.AppendText(tradeLine);
             await RefreshPrivateAsync(ct);
@@ -333,6 +336,15 @@ public sealed partial class MainWindow
     {
         foreach (var position in _state.Positions.ToList())
         {
+            if (!SessionOwnershipRegistry.IsCurrentSessionBotOwned(position.Symbol))
+            {
+                position.Owner = "MỞ TAY / CÓ SẴN";
+                position.Health = "CHỈ ĐỌC — KHÔNG CAN THIỆP";
+                position.Recommendation = "ANH TỰ QUẢN LÝ";
+                continue;
+            }
+
+            position.Owner = "BOT";
             var netPnl = position.NetPnlAfterFunding;
             if (!_peakNetPnl.TryGetValue(position.Symbol, out var peak) || netPnl > peak)
                 _peakNetPnl[position.Symbol] = netPnl;
@@ -340,12 +352,6 @@ public sealed partial class MainWindow
             position.PeakNetPnl = peak;
             position.PeakUnrealizedPnl = Math.Max(position.PeakUnrealizedPnl, position.UnrealizedPnl);
             position.GivebackPercent = peak > 0m ? Math.Max(0m, (peak - netPnl) / peak * 100m) : 0m;
-
-            if (position.Owner != "BOT")
-            {
-                position.Recommendation = position.StopLossConfirmed ? "THEO DÕI VỊ THẾ TAY" : "VỊ THẾ TAY THIẾU HARD SL";
-                continue;
-            }
 
             var market = _state.Markets.FirstOrDefault(x => string.Equals(x.Symbol, position.Symbol, StringComparison.OrdinalIgnoreCase));
             var wrongDirection = market != null && market.TrendScore >= 80 &&
@@ -358,8 +364,9 @@ public sealed partial class MainWindow
                 _blockNewEntries = true;
                 var exitSide = position.Side == "LONG" ? "SELL" : "BUY";
                 await _execution.EmergencyCloseAsync(position.Symbol, exitSide, position.Quantity, ct);
-                position.Recommendation = "ĐÓNG KHẨN CẤP — THIẾU HARD SL";
-                AddAlert("EMERGENCY_UNPROTECTED", $"{position.Symbol}: vị thế BOT thiếu hard SL, đã gửi đóng reduce-only.");
+                SessionOwnershipRegistry.Release(position.Symbol);
+                position.Recommendation = "ĐÓNG KHẨN CẤP — BOT PHIÊN HIỆN TẠI THIẾU HARD SL";
+                AddAlert("EMERGENCY_UNPROTECTED", $"{position.Symbol}: BOT PHIÊN HIỆN TẠI thiếu hard SL, đã đóng reduce-only.");
                 continue;
             }
 
@@ -369,13 +376,13 @@ public sealed partial class MainWindow
                 await _execution.EmergencyCloseAsync(position.Symbol, exitSide, position.Quantity, ct);
                 position.Recommendation = wrongDirection ? "ĐÓNG — SAI XU HƯỚNG" : "ĐÓNG — BẢO VỆ NET PNL";
                 Log("MANAGE", $"{position.Symbol}: {position.Recommendation}; peak net {peak:0.00}, current net {netPnl:0.00}, giveback {position.GivebackPercent:0.0}%.");
-                _botOwnedSymbols.Remove(position.Symbol);
+                SessionOwnershipRegistry.Release(position.Symbol);
                 _activePlans.Remove(position.Symbol);
                 _peakNetPnl.Remove(position.Symbol);
             }
             else
             {
-                position.Health = "XU HƯỚNG CÒN HỢP LỆ";
+                position.Health = "BOT PHIÊN HIỆN TẠI — XU HƯỚNG CÒN HỢP LỆ";
                 position.Recommendation = position.TakeProfitConfirmed ? "GIỮ / TIẾP TỤC BẢO VỆ" : "GIỮ CÓ SL / RETRY TP";
             }
         }

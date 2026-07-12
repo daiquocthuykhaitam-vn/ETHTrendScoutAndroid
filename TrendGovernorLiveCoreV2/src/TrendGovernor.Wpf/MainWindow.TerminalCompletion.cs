@@ -10,7 +10,7 @@ public sealed partial class MainWindow
 {
     internal void InitializeTerminalCompletionUi()
     {
-        Title = "TRENDGOVERNOR LIVE CORE V2 - BUILD 13 UNIFIED TERMINAL";
+        Title = "TRENDGOVERNOR LIVE CORE V2 - PACK 14 LIVE TERMINAL";
         Loaded += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
         {
             ApplyUnifiedVisualTheme();
@@ -97,15 +97,7 @@ public sealed partial class MainWindow
         grid.HorizontalGridLinesBrush = B("#21445F");
         grid.VerticalGridLinesBrush = B("#21445F");
         grid.GridLinesVisibility = DataGridGridLinesVisibility.All;
-
-        var headerStyle = new Style(typeof(DataGridColumnHeader));
-        headerStyle.Setters.Add(new Setter(Control.BackgroundProperty, B("#14324A")));
-        headerStyle.Setters.Add(new Setter(Control.ForegroundProperty, B("#F4F8FC")));
-        headerStyle.Setters.Add(new Setter(Control.BorderBrushProperty, B("#2B5574")));
-        headerStyle.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(0, 0, 1, 1)));
-        headerStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(8, 5, 8, 5)));
-        headerStyle.Setters.Add(new Setter(Control.FontWeightProperty, FontWeights.SemiBold));
-        grid.ColumnHeaderStyle = headerStyle;
+        grid.ColumnHeaderStyle = CreateHardDarkHeaderStyle();
 
         var rowStyle = new Style(typeof(DataGridRow));
         rowStyle.Setters.Add(new Setter(Control.ForegroundProperty, B("#EAF4FF")));

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net.Http;
 using System.Net.WebSockets;
@@ -9,17 +10,22 @@ namespace TrendGovernor.Wpf;
 
 public sealed class BinanceExecutionGateway : IAsyncDisposable
 {
+    private static readonly HashSet<string> TerminalStatuses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "FILLED", "CANCELED", "EXPIRED", "REJECTED"
+    };
+
     private readonly HttpClient _http = new() { BaseAddress = new Uri("https://fapi.binance.com") };
-    private readonly Dictionary<string, SymbolTradingRules> _ruleCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, SymbolTradingRules> _ruleCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _sendGate = new(1, 1);
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<ExecutionFill>> _terminalWaiters = new(StringComparer.Ordinal);
     private string _apiKey = "";
     private string _apiSecret = "";
     private ClientWebSocket? _userSocket;
     private CancellationTokenSource? _userStreamCts;
     private Task? _userStreamTask;
-    private readonly Dictionary<string, TaskCompletionSource<ExecutionFill>> _fillWaiters = new(StringComparer.Ordinal);
 
-    public bool HasCredentials => !string.IsNullOrWhiteSpace(_apiKey) && !string.IsNullOrWhiteSpace(_apiSecret);
+    public bool HasCredentials => CredentialRules.IsUsable(_apiKey) && CredentialRules.IsUsable(_apiSecret);
     public event Action<string, string>? EventReceived;
 
     public void SetCredentials(string apiKey, string apiSecret)
@@ -30,7 +36,7 @@ public sealed class BinanceExecutionGateway : IAsyncDisposable
 
     public async Task StartUserDataStreamAsync(CancellationToken ct)
     {
-        if (!HasCredentials) throw new InvalidOperationException("Chưa có API Key/Secret.");
+        if (!HasCredentials) throw new InvalidOperationException("Chưa có API Key/Secret hợp lệ.");
         if (_userStreamTask is { IsCompleted: false }) return;
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/fapi/v1/listenKey");
@@ -39,7 +45,8 @@ public sealed class BinanceExecutionGateway : IAsyncDisposable
         var json = await response.Content.ReadAsStringAsync(ct);
         if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"Không tạo được listenKey: {json}");
         using var document = JsonDocument.Parse(json);
-        var listenKey = document.RootElement.GetProperty("listenKey").GetString() ?? throw new InvalidOperationException("listenKey rỗng.");
+        var listenKey = document.RootElement.GetProperty("listenKey").GetString()
+            ?? throw new InvalidOperationException("listenKey rỗng.");
 
         _userStreamCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         _userSocket = new ClientWebSocket();
@@ -52,13 +59,17 @@ public sealed class BinanceExecutionGateway : IAsyncDisposable
         using var keepAlive = new PeriodicTimer(TimeSpan.FromMinutes(45));
         var keepAliveTask = Task.Run(async () =>
         {
-            while (await keepAlive.WaitForNextTickAsync(ct))
+            try
             {
-                using var request = new HttpRequestMessage(HttpMethod.Put, $"/fapi/v1/listenKey?listenKey={Uri.EscapeDataString(listenKey)}");
-                request.Headers.Add("X-MBX-APIKEY", _apiKey);
-                using var response = await _http.SendAsync(request, ct);
-                if (!response.IsSuccessStatusCode) EventReceived?.Invoke("USER_STREAM", "Gia hạn listenKey thất bại.");
+                while (await keepAlive.WaitForNextTickAsync(ct))
+                {
+                    using var request = new HttpRequestMessage(HttpMethod.Put, $"/fapi/v1/listenKey?listenKey={Uri.EscapeDataString(listenKey)}");
+                    request.Headers.Add("X-MBX-APIKEY", _apiKey);
+                    using var response = await _http.SendAsync(request, ct);
+                    if (!response.IsSuccessStatusCode) EventReceived?.Invoke("USER_STREAM", "Gia hạn listenKey thất bại.");
+                }
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         }, ct);
 
         var buffer = new byte[64 * 1024];
@@ -76,6 +87,7 @@ public sealed class BinanceExecutionGateway : IAsyncDisposable
                 ProcessUserEvent(payload);
             }
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         finally
         {
             try { await keepAliveTask; } catch { }
@@ -94,21 +106,23 @@ public sealed class BinanceExecutionGateway : IAsyncDisposable
 
             var clientOrderId = order.TryGetProperty("c", out var c) ? c.GetString() ?? "" : "";
             var status = order.TryGetProperty("X", out var x) ? x.GetString() ?? "" : "";
-            if (!_fillWaiters.TryGetValue(clientOrderId, out var waiter)) return;
-            if (status is not ("FILLED" or "PARTIALLY_FILLED")) return;
+            if (status == "PARTIALLY_FILLED")
+            {
+                EventReceived?.Invoke("ORDER_PARTIALLY_FILLED", payload);
+                return;
+            }
+            if (!TerminalStatuses.Contains(status)) return;
+            if (!_terminalWaiters.TryGetValue(clientOrderId, out var waiter)) return;
 
-            var executed = Parse(order, "z");
-            var average = Parse(order, "ap");
-            var orderId = order.TryGetProperty("i", out var id) ? id.GetInt64() : 0L;
             waiter.TrySetResult(new ExecutionFill
             {
-                OrderId = orderId,
+                OrderId = order.TryGetProperty("i", out var id) ? id.GetInt64() : 0L,
                 ClientOrderId = clientOrderId,
                 Symbol = order.TryGetProperty("s", out var s) ? s.GetString() ?? "" : "",
                 Side = order.TryGetProperty("S", out var side) ? side.GetString() ?? "" : "",
                 Status = status,
-                ExecutedQuantity = executed,
-                AveragePrice = average
+                ExecutedQuantity = Parse(order, "z"),
+                AveragePrice = Parse(order, "ap")
             });
         }
         catch (Exception ex)
@@ -140,8 +154,7 @@ public sealed class BinanceExecutionGateway : IAsyncDisposable
                 }
                 else if (type is "MIN_NOTIONAL" or "NOTIONAL")
                 {
-                    if (filter.TryGetProperty("notional", out _)) minNotional = Parse(filter, "notional");
-                    else if (filter.TryGetProperty("minNotional", out _)) minNotional = Parse(filter, "minNotional");
+                    minNotional = filter.TryGetProperty("notional", out _) ? Parse(filter, "notional") : Parse(filter, "minNotional");
                 }
             }
             var rules = new SymbolTradingRules
@@ -198,7 +211,7 @@ public sealed class BinanceExecutionGateway : IAsyncDisposable
         var normalized = Math.Floor(quantity / rules.StepSize) * rules.StepSize;
         if (normalized < rules.MinQuantity) return 0m;
         if (rules.MaxQuantity > 0 && normalized > rules.MaxQuantity) normalized = rules.MaxQuantity;
-        return normalized;
+        return Math.Round(normalized, rules.QuantityPrecision, MidpointRounding.ToZero);
     }
 
     public decimal NormalizePrice(decimal price, SymbolTradingRules rules)
@@ -207,40 +220,53 @@ public sealed class BinanceExecutionGateway : IAsyncDisposable
         return Math.Round(Math.Floor(price / rules.TickSize) * rules.TickSize, rules.PricePrecision, MidpointRounding.ToZero);
     }
 
-    public async Task<ExecutionFill> PlaceMarketAndWaitFillAsync(string symbol, string side, decimal quantity, CancellationToken ct)
+    public Task<ExecutionFill> PlaceMarketAndWaitFillAsync(string symbol, string side, decimal quantity, CancellationToken ct)
+        => PlaceMarketAndWaitFillAsync(new OrderIntent(
+            $"legacy-{Guid.NewGuid():N}", "legacy", "legacy", "legacy", symbol, side, "MARKET", quantity, null, false, DateTimeOffset.UtcNow), ct);
+
+    public async Task<ExecutionFill> PlaceMarketAndWaitFillAsync(OrderIntent intent, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(intent);
+        if (intent.ReduceOnly) throw new InvalidOperationException("Entry OrderIntent không được reduce-only.");
+        if (intent.Type != "MARKET") throw new InvalidOperationException("Pack 14 hiện chỉ cho phép MARKET OrderIntent.");
+
         await _sendGate.WaitAsync(ct);
         try
         {
-            var clientOrderId = $"tg-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}-{Random.Shared.Next(1000, 9999)}";
+            var clientOrderId = BuildClientOrderId(intent.OrderIntentId);
             var waiter = new TaskCompletionSource<ExecutionFill>(TaskCreationOptions.RunContinuationsAsynchronously);
-            _fillWaiters[clientOrderId] = waiter;
+            if (!_terminalWaiters.TryAdd(clientOrderId, waiter))
+                throw new InvalidOperationException("clientOrderId bị trùng.");
+
             try
             {
                 using var document = await SignedAsync(HttpMethod.Post, "/fapi/v1/order", new()
                 {
-                    ["symbol"] = symbol,
-                    ["side"] = side,
+                    ["symbol"] = intent.Symbol,
+                    ["side"] = intent.Side,
                     ["type"] = "MARKET",
-                    ["quantity"] = F(quantity),
+                    ["quantity"] = F(intent.Quantity),
                     ["newClientOrderId"] = clientOrderId,
                     ["newOrderRespType"] = "RESULT"
                 }, ct);
 
-                var immediate = ParseFill(document.RootElement, clientOrderId, symbol, side);
-                if (immediate.Status == "FILLED" && immediate.ExecutedQuantity > 0) return immediate;
+                var immediate = ParseFill(document.RootElement, clientOrderId, intent.Symbol, intent.Side);
+                if (TerminalStatuses.Contains(immediate.Status)) return immediate;
 
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 timeout.CancelAfter(TimeSpan.FromSeconds(12));
-                try { return await waiter.Task.WaitAsync(timeout.Token); }
+                try
+                {
+                    return await waiter.Task.WaitAsync(timeout.Token);
+                }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                 {
-                    return await QueryOrderUntilFilledAsync(symbol, clientOrderId, TimeSpan.FromSeconds(8), ct);
+                    return await QueryOrderUntilTerminalAsync(intent.Symbol, clientOrderId, TimeSpan.FromSeconds(12), ct);
                 }
             }
             finally
             {
-                _fillWaiters.Remove(clientOrderId);
+                _terminalWaiters.TryRemove(clientOrderId, out _);
             }
         }
         finally
@@ -249,9 +275,10 @@ public sealed class BinanceExecutionGateway : IAsyncDisposable
         }
     }
 
-    private async Task<ExecutionFill> QueryOrderUntilFilledAsync(string symbol, string clientOrderId, TimeSpan timeout, CancellationToken ct)
+    private async Task<ExecutionFill> QueryOrderUntilTerminalAsync(string symbol, string clientOrderId, TimeSpan timeout, CancellationToken ct)
     {
         var until = DateTime.UtcNow + timeout;
+        ExecutionFill? last = null;
         while (DateTime.UtcNow < until)
         {
             using var document = await SignedAsync(HttpMethod.Get, "/fapi/v1/order", new()
@@ -259,26 +286,31 @@ public sealed class BinanceExecutionGateway : IAsyncDisposable
                 ["symbol"] = symbol,
                 ["origClientOrderId"] = clientOrderId
             }, ct);
-            var fill = ParseFill(document.RootElement, clientOrderId, symbol, document.RootElement.GetProperty("side").GetString() ?? "");
-            if (fill.Status == "FILLED" && fill.ExecutedQuantity > 0) return fill;
+            last = ParseFill(document.RootElement, clientOrderId, symbol, document.RootElement.GetProperty("side").GetString() ?? "");
+            if (TerminalStatuses.Contains(last.Status)) return last;
             await Task.Delay(500, ct);
         }
-        throw new InvalidOperationException($"Không xác nhận được FILL thật cho {symbol} ({clientOrderId}).");
+        throw new InvalidOperationException($"Order {symbol}/{clientOrderId} chưa tới trạng thái terminal. Last={last?.Status ?? "UNKNOWN"}.");
     }
 
-    public async Task<ProtectionVerification> PlaceAndVerifyProtectionAsync(string symbol, string exitSide, decimal quantity, decimal stopPrice, decimal takeProfitPrice, CancellationToken ct)
+    public async Task<ProtectionVerification> PlaceAndVerifyProtectionAsync(
+        string symbol,
+        string exitSide,
+        decimal quantity,
+        decimal stopPrice,
+        decimal takeProfitPrice,
+        CancellationToken ct)
     {
-        var baseId = $"tg-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}-{Random.Shared.Next(100, 999)}";
-        var stopId = await PlaceAlgoAsync(symbol, exitSide, "STOP_MARKET", quantity, stopPrice, baseId + "-sl", ct);
-        long tpId;
+        var baseId = $"tg14p-{Guid.NewGuid():N}"[..30];
+        var stopId = await PlaceAlgoAsync(symbol, exitSide, "STOP_MARKET", quantity, stopPrice, baseId + "-s", ct);
+        long tpId = 0;
         try
         {
-            tpId = await PlaceAlgoAsync(symbol, exitSide, "TAKE_PROFIT_MARKET", quantity, takeProfitPrice, baseId + "-tp", ct);
+            tpId = await PlaceAlgoAsync(symbol, exitSide, "TAKE_PROFIT_MARKET", quantity, takeProfitPrice, baseId + "-t", ct);
         }
-        catch
+        catch (Exception ex)
         {
-            EventReceived?.Invoke("PROTECT", $"{symbol}: TP lỗi, SL đã gửi; tiếp tục reconcile TP.");
-            tpId = 0;
+            EventReceived?.Invoke("PROTECT", $"{symbol}: TP lỗi sau khi SL đã gửi: {ex.Message}");
         }
 
         var until = DateTime.UtcNow.AddSeconds(10);
@@ -287,7 +319,8 @@ public sealed class BinanceExecutionGateway : IAsyncDisposable
             var open = await GetOpenAlgoOrdersAsync(symbol, ct);
             var stopOk = open.Any(x => x.AlgoId == stopId && x.OrderType == "STOP_MARKET" && x.Status == "NEW");
             var tpOk = tpId > 0 && open.Any(x => x.AlgoId == tpId && x.OrderType == "TAKE_PROFIT_MARKET" && x.Status == "NEW");
-            if (stopOk && tpOk) return new ProtectionVerification { StopLossConfirmed = true, TakeProfitConfirmed = true, StopAlgoId = stopId, TakeProfitAlgoId = tpId };
+            if (stopOk && tpOk)
+                return new ProtectionVerification { StopLossConfirmed = true, TakeProfitConfirmed = true, StopAlgoId = stopId, TakeProfitAlgoId = tpId };
             await Task.Delay(500, ct);
         }
 
@@ -340,7 +373,7 @@ public sealed class BinanceExecutionGateway : IAsyncDisposable
 
     public async Task EmergencyCloseAsync(string symbol, string exitSide, decimal quantity, CancellationToken ct)
     {
-        using var _ = await SignedAsync(HttpMethod.Post, "/fapi/v1/order", new()
+        using var document = await SignedAsync(HttpMethod.Post, "/fapi/v1/order", new()
         {
             ["symbol"] = symbol,
             ["side"] = exitSide,
@@ -350,11 +383,14 @@ public sealed class BinanceExecutionGateway : IAsyncDisposable
             ["newClientOrderId"] = $"tg-emergency-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
             ["newOrderRespType"] = "RESULT"
         }, ct);
+        var status = document.RootElement.TryGetProperty("status", out var s) ? s.GetString() ?? "" : "";
+        if (status is "REJECTED" or "EXPIRED" or "CANCELED")
+            throw new InvalidOperationException($"Emergency close kết thúc {status}.");
     }
 
     private async Task<JsonDocument> SignedAsync(HttpMethod method, string path, Dictionary<string, string> parameters, CancellationToken ct)
     {
-        if (!HasCredentials) throw new InvalidOperationException("Chưa nhập API Key/Secret.");
+        if (!HasCredentials) throw new InvalidOperationException("Chưa nhập API Key/Secret hợp lệ.");
         parameters["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
         parameters["recvWindow"] = "5000";
         var query = string.Join("&", parameters.OrderBy(x => x.Key).Select(x => $"{Uri.EscapeDataString(x.Key)}={Uri.EscapeDataString(x.Value)}"));
@@ -379,6 +415,12 @@ public sealed class BinanceExecutionGateway : IAsyncDisposable
             ExecutedQuantity = Parse(root, "executedQty"),
             AveragePrice = Parse(root, "avgPrice")
         };
+
+    private static string BuildClientOrderId(string intentId)
+    {
+        var suffix = new string(intentId.Where(char.IsLetterOrDigit).TakeLast(26).ToArray());
+        return $"tg14-{suffix}"[..Math.Min(36, 5 + suffix.Length)];
+    }
 
     private static decimal Parse(JsonElement element, string property)
     {

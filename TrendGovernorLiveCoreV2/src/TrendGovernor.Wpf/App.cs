@@ -1,5 +1,4 @@
 using System.IO;
-using System.Reflection;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -17,11 +16,11 @@ public static class AppEntry
         {
             var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
             app.DispatcherUnhandledException += OnDispatcherUnhandledException;
+
             var window = new MainWindow();
             window.InitializeFundingUi();
-            window.GetType()
-                .GetMethod("InitializeCredentialThemeAndFundingUi", BindingFlags.Instance | BindingFlags.NonPublic)
-                ?.Invoke(window, null);
+            window.InitializeCredentialThemeAndFundingUi();
+
             app.Run(window);
             WriteLog("EXIT", "Ứng dụng đã đóng bình thường.");
         }

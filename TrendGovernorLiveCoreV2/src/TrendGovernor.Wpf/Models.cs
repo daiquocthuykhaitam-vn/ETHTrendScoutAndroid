@@ -28,6 +28,28 @@ public sealed class MarketRow
     public decimal DistanceToEmaPercent { get; set; }
     public decimal ExpectedMovePercent { get; set; }
 
+    public decimal FundingRate { get; set; }
+    public decimal FundingRatePercent { get; set; }
+    public int FundingIntervalHours { get; set; }
+    public decimal FundingPerHourPercent { get; set; }
+    public decimal Funding24hPercent { get; set; }
+    public DateTimeOffset? NextFundingTime { get; set; }
+    public int FundingMinutesRemaining { get; set; }
+    public string FundingFlow { get; set; } = "CHƯA CÓ";
+    public string FundingLevel { get; set; } = "CHƯA CÓ";
+    public decimal FundingAveragePercent { get; set; }
+    public int FundingSameSignPeriods { get; set; }
+    public int FundingSignChanges { get; set; }
+    public string FundingStability { get; set; } = "CHƯA CÓ";
+    public decimal MarkPrice { get; set; }
+    public decimal IndexPrice { get; set; }
+    public decimal PremiumPercent { get; set; }
+    public decimal EstimatedFundingForTrade { get; set; }
+    public int FundingScore { get; set; }
+    public string FundingBias { get; set; } = "TRUNG LẬP";
+    public bool FundingFavorsDirection { get; set; }
+    public string FundingWarning { get; set; } = "";
+
     public decimal EntryLow { get; set; }
     public decimal EntryHigh { get; set; }
     public decimal StopLoss { get; set; }
@@ -57,7 +79,17 @@ public sealed class PositionRow
     public decimal EntryPrice { get; set; }
     public decimal MarkPrice { get; set; }
     public decimal UnrealizedPnl { get; set; }
+    public decimal RealizedFunding { get; set; }
+    public decimal EstimatedNextFunding { get; set; }
+    public decimal NetPnlAfterFunding { get; set; }
+    public decimal ProjectedNetPnl { get; set; }
+    public decimal FundingRatePercent { get; set; }
+    public int FundingIntervalHours { get; set; }
+    public DateTimeOffset? NextFundingTime { get; set; }
+    public string FundingFlow { get; set; } = "CHƯA CÓ";
+    public string FundingLevel { get; set; } = "CHƯA CÓ";
     public decimal PeakUnrealizedPnl { get; set; }
+    public decimal PeakNetPnl { get; set; }
     public decimal GivebackPercent { get; set; }
     public string Protection { get; set; } = "CHƯA XÁC MINH";
     public string Health { get; set; } = "CHƯA ĐÁNH GIÁ";
@@ -78,11 +110,44 @@ public sealed class OrderRow
     public bool IsAlgo { get; set; }
 }
 
+public sealed class FundingIncomeRow
+{
+    public string Symbol { get; init; } = "";
+    public decimal Income { get; init; }
+    public string Asset { get; init; } = "USDT";
+    public DateTimeOffset Time { get; init; }
+    public long TransactionId { get; init; }
+}
+
+public sealed class FundingSnapshot
+{
+    public string Symbol { get; init; } = "";
+    public decimal MarkPrice { get; init; }
+    public decimal IndexPrice { get; init; }
+    public decimal PremiumPercent { get; init; }
+    public decimal FundingRate { get; init; }
+    public decimal FundingRatePercent { get; init; }
+    public int FundingIntervalHours { get; init; }
+    public decimal FundingPerHourPercent { get; init; }
+    public decimal Funding24hPercent { get; init; }
+    public DateTimeOffset? NextFundingTime { get; init; }
+    public int MinutesRemaining { get; init; }
+    public string Flow { get; init; } = "CHƯA CÓ";
+    public string Level { get; init; } = "CHƯA CÓ";
+    public decimal AverageFundingPercent { get; init; }
+    public int SameSignPeriods { get; init; }
+    public int SignChanges { get; init; }
+    public string Stability { get; init; } = "CHƯA CÓ";
+    public decimal EstimatedLongFunding { get; init; }
+    public decimal EstimatedShortFunding { get; init; }
+}
+
 public sealed class AccountState
 {
     public decimal TotalWalletBalance { get; set; }
     public decimal AvailableBalance { get; set; }
     public decimal TotalUnrealizedProfit { get; set; }
+    public decimal FundingIncome24h { get; set; }
 }
 
 public sealed class TradingConfig
@@ -97,6 +162,8 @@ public sealed class TradingConfig
     public decimal MinimumRiskReward { get; set; } = 2.0m;
     public bool RequireIsolated { get; set; } = true;
     public bool AutoLiveEnabled { get; set; }
+    public int FundingWeightPercent { get; set; } = 10;
+    public bool BlockExtremeFundingCost { get; set; } = true;
 }
 
 public sealed class DashboardState

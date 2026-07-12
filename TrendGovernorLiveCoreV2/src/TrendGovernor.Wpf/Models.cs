@@ -4,10 +4,17 @@ namespace TrendGovernor.Wpf;
 
 public sealed class MarketRow
 {
+    public int RadarRank { get; set; }
     public string Symbol { get; set; } = "";
     public decimal Price { get; set; }
     public decimal Change24h { get; set; }
+    public decimal Range24hPercent { get; set; }
     public decimal QuoteVolume { get; set; }
+    public int UniverseScore { get; set; }
+    public string UniverseSource { get; set; } = "CHƯA PHÂN LOẠI";
+    public string LiquidityTier { get; set; } = "--";
+    public int ListingAgeDays { get; set; }
+    public bool RetainedByMemory { get; set; }
 
     public string CandidateId { get; set; } = "";
     public string CandidateStage { get; set; } = "Discovered";
@@ -69,6 +76,8 @@ public sealed class MarketRow
 public sealed class CandlePoint
 {
     public DateTime OpenTime { get; set; }
+    public DateTime CloseTime { get; set; }
+    public bool IsClosed { get; set; }
     public decimal Open { get; set; }
     public decimal High { get; set; }
     public decimal Low { get; set; }
@@ -174,7 +183,7 @@ public sealed class TradingConfig
     public decimal MarginPerTrade { get; set; } = 2m;
     public int Leverage { get; set; } = 3;
     public int MaxPositions { get; set; } = 1;
-    public int DeepScanCount { get; set; } = 24;
+    public int DeepScanCount { get; set; } = 40;
     public int ScanIntervalSeconds { get; set; } = 60;
     public int RequiredStableCycles { get; set; } = 2;
     public int MinimumScore { get; set; } = 80;
@@ -190,6 +199,8 @@ public sealed class DashboardState
     public ObservableCollection<MarketRow> Markets { get; } = [];
     public ObservableCollection<PositionRow> Positions { get; } = [];
     public ObservableCollection<OrderRow> Orders { get; } = [];
+    public ObservableCollection<LifecycleBoardRow> Lifecycle { get; } = [];
+    public ObservableCollection<VerifyMatrixRow> VerifyMatrix { get; } = [];
 }
 
 public sealed class SymbolTradingRules

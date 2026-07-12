@@ -11,7 +11,9 @@ public sealed class CandidateLifecycleStore
     public CandidateLifecycleStore(SessionEventJournal journal, string sessionId)
     {
         _journal = journal ?? throw new ArgumentNullException(nameof(journal));
-        _sessionId = string.IsNullOrWhiteSpace(sessionId) ? throw new ArgumentException("sessionId rỗng.", nameof(sessionId)) : sessionId;
+        _sessionId = string.IsNullOrWhiteSpace(sessionId)
+            ? throw new ArgumentException("sessionId rỗng.", nameof(sessionId))
+            : sessionId;
     }
 
     public IReadOnlyCollection<CandidateRecord> Snapshot()
@@ -20,15 +22,13 @@ public sealed class CandidateLifecycleStore
     public CandidateRecord GetOrCreate(string symbol, string snapshotId, DateTimeOffset now, TimeSpan ttl)
     {
         if (string.IsNullOrWhiteSpace(symbol)) throw new ArgumentException("symbol rỗng.", nameof(symbol));
-        return _records.GetOrAdd(symbol, key => new CandidateRecord
-        {
-            CandidateId = $"cand-{key}-{now.ToUnixTimeMilliseconds()}-{Guid.NewGuid():N}",
-            Symbol = key,
-            FirstSeen = now,
-            ExpiresAt = now.Add(ttl),
-            SourceSnapshotId = snapshotId,
-            LastSeen = now
-        });
+
+        return _records.AddOrUpdate(
+            symbol,
+            key => Create(key, snapshotId, now, ttl),
+            (key, current) => IsTerminal(current.Stage) && current.LastSeen < now.AddSeconds(-5)
+                ? Create(key, snapshotId, now, ttl)
+                : current);
     }
 
     public async Task<CandidateRecord> ObserveAsync(
@@ -55,15 +55,31 @@ public sealed class CandidateLifecycleStore
                 record.CandidateId,
                 record.DecisionVersion,
                 record.StageReason,
-                new { previous = previous.ToString(), current = target.ToString(), row.Status, row.Reason, record.StableCycles }), ct);
+                new
+                {
+                    previous = previous.ToString(),
+                    current = target.ToString(),
+                    row.Status,
+                    row.Reason,
+                    record.StableCycles,
+                    row.RadarRank,
+                    row.UniverseSource,
+                    row.UniverseScore
+                }), ct);
         }
 
         return record;
     }
 
-    public async Task TransitionAsync(CandidateRecord record, CandidateStage next, string reasonCode, object? payload, CancellationToken ct)
+    public async Task TransitionAsync(
+        CandidateRecord record,
+        CandidateStage next,
+        string reasonCode,
+        object? payload,
+        CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(record);
+        if (record.Stage == next) return;
         var previous = record.Stage;
         record.Transition(next, reasonCode);
         await _journal.AppendAsync(SessionEventJournal.Create(
@@ -80,29 +96,49 @@ public sealed class CandidateLifecycleStore
     {
         foreach (var pair in _records)
         {
-            var terminal = pair.Value.Stage is CandidateStage.Audited or CandidateStage.Rejected or CandidateStage.Expired;
-            if (terminal && pair.Value.ExpiresAt <= now)
+            if (IsTerminal(pair.Value.Stage) && pair.Value.ExpiresAt <= now)
                 _records.TryRemove(pair.Key, out _);
         }
     }
 
+    private static CandidateRecord Create(string symbol, string snapshotId, DateTimeOffset now, TimeSpan ttl)
+        => new()
+        {
+            CandidateId = $"cand-{symbol}-{now.ToUnixTimeMilliseconds()}-{Guid.NewGuid():N}",
+            Symbol = symbol,
+            FirstSeen = now,
+            ExpiresAt = now.Add(ttl),
+            SourceSnapshotId = snapshotId,
+            LastSeen = now
+        };
+
+    private static bool IsTerminal(CandidateStage stage)
+        => stage is CandidateStage.Audited or CandidateStage.Rejected or CandidateStage.Expired or CandidateStage.Closed;
+
     private static CandidateStage ResolveTargetStage(MarketRow row, int stableCycles, int requiredStableCycles)
     {
-        if (row.Status.StartsWith("BLOCK", StringComparison.OrdinalIgnoreCase) || row.Status.Contains("LỖI", StringComparison.OrdinalIgnoreCase))
-            return CandidateStage.Rejected;
-        if (row.Status.Contains("CHỜ PULLBACK", StringComparison.OrdinalIgnoreCase) || row.Status.Contains("CHỜ XÁC NHẬN", StringComparison.OrdinalIgnoreCase))
+        if (row.Status.Contains("CHỜ PULLBACK", StringComparison.OrdinalIgnoreCase) ||
+            row.Status.Contains("CHỜ XÁC NHẬN", StringComparison.OrdinalIgnoreCase) ||
+            row.Status.Contains("DATA_PENDING", StringComparison.OrdinalIgnoreCase))
             return CandidateStage.WaitingRetest;
+
         if (row.AutoEligible && stableCycles >= Math.Max(1, requiredStableCycles))
             return CandidateStage.PlanReady;
+
         return CandidateStage.Watching;
     }
 
     private static string ResolveReasonCode(MarketRow row, CandidateStage stage) => stage switch
     {
-        CandidateStage.Rejected => "RADAR_REJECTED",
-        CandidateStage.WaitingRetest => "ENTRY_WAIT_RETEST",
+        CandidateStage.WaitingRetest => row.Status.Contains("DATA_PENDING", StringComparison.OrdinalIgnoreCase)
+            ? "RADAR_DATA_PENDING"
+            : "ENTRY_WAIT_RETEST",
         CandidateStage.PlanReady => "PLAN_READY_STABLE",
+        CandidateStage.Watching when row.Status.StartsWith("BLOCK", StringComparison.OrdinalIgnoreCase) => "RADAR_BLOCKED_WATCH_ONLY",
+        CandidateStage.Watching when row.Status.Contains("LỖI", StringComparison.OrdinalIgnoreCase) => "RADAR_ERROR_WATCH_ONLY",
         CandidateStage.Watching => "CANDIDATE_WATCHING",
-        _ => string.IsNullOrWhiteSpace(row.Status) ? "UNSPECIFIED" : row.Status.Replace(' ', '_').ToUpperInvariant()
+        _ => string.IsNullOrWhiteSpace(row.Status)
+            ? "UNSPECIFIED"
+            : row.Status.Replace(' ', '_').ToUpperInvariant()
     };
 }

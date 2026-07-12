@@ -7,7 +7,7 @@ namespace TrendGovernor.Wpf;
 
 public sealed partial class MainWindow
 {
-    private void InitializeCredentialThemeAndFundingUi()
+    internal void InitializeCredentialThemeAndFundingUi()
     {
         Loaded += (_, _) =>
         {

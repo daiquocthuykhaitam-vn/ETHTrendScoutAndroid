@@ -1,4 +1,4 @@
-name: TrendGovernor Windows Build 11 Professional Terminal
+name: TrendGovernor Windows Build 12 Clean Terminal
 
 on:
   pull_request:
@@ -36,7 +36,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: TRENDGOVERNOR_BUILD_DIAGNOSTIC
+          name: TRENDGOVERNOR_BUILD_12_DIAGNOSTIC
           path: build.log
           if-no-files-found: ignore
           retention-days: 3
@@ -83,13 +83,19 @@ jobs:
         run: |
           Copy-Item 'TrendGovernorLiveCoreV2/START_TOOL.cmd' 'TrendGovernorLiveCoreV2/release/START_TOOL.cmd' -Force
           Copy-Item 'TrendGovernorLiveCoreV2/SAVE_API_ONCE.ps1' 'TrendGovernorLiveCoreV2/release/SAVE_API_ONCE.ps1' -Force
+          Copy-Item 'TrendGovernorLiveCoreV2/README_FIRST.txt' 'TrendGovernorLiveCoreV2/release/README_FIRST.txt' -Force
+          Copy-Item 'TrendGovernorLiveCoreV2/RELEASE_REPORT_BUILD_12.md' 'TrendGovernorLiveCoreV2/release/RELEASE_REPORT_BUILD_12.md' -Force
           New-Item -ItemType Directory -Path 'TrendGovernorLiveCoreV2/release/logs' -Force | Out-Null
-          Compress-Archive -Path 'TrendGovernorLiveCoreV2/release/*' -DestinationPath 'TRENDGOVERNOR_WINDOWS_X64_BUILD_11_PROFESSIONAL_TERMINAL.zip' -Force
+          $zip = 'TRENDGOVERNOR_WINDOWS_X64_BUILD_12_CLEAN_TERMINAL.zip'
+          Compress-Archive -Path 'TrendGovernorLiveCoreV2/release/*' -DestinationPath $zip -Force
+          Get-FileHash $zip -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $zip" } | Set-Content "$zip.sha256"
 
       - name: Upload Windows release
         uses: actions/upload-artifact@v4
         with:
-          name: TRENDGOVERNOR_WINDOWS_X64_BUILD_11_PROFESSIONAL_TERMINAL
-          path: TRENDGOVERNOR_WINDOWS_X64_BUILD_11_PROFESSIONAL_TERMINAL.zip
+          name: TRENDGOVERNOR_WINDOWS_X64_BUILD_12_CLEAN_TERMINAL
+          path: |
+            TRENDGOVERNOR_WINDOWS_X64_BUILD_12_CLEAN_TERMINAL.zip
+            TRENDGOVERNOR_WINDOWS_X64_BUILD_12_CLEAN_TERMINAL.zip.sha256
           if-no-files-found: error
           retention-days: 30

@@ -73,8 +73,17 @@ public sealed class CandlePoint
 
 public sealed class PositionRow
 {
+    private string _owner = "MỞ TAY / CÓ SẴN";
+
     public string Symbol { get; set; } = "";
-    public string Owner { get; set; } = "MỞ TAY";
+    public string Owner
+    {
+        get => _owner;
+        set => _owner = string.Equals(value, "BOT", StringComparison.OrdinalIgnoreCase)
+            && SessionOwnershipRegistry.IsCurrentSessionBotOwned(Symbol)
+                ? "BOT"
+                : "MỞ TAY / CÓ SẴN";
+    }
     public string Side { get; set; } = "";
     public decimal Quantity { get; set; }
     public decimal EntryPrice { get; set; }
@@ -95,8 +104,8 @@ public sealed class PositionRow
     public bool StopLossConfirmed { get; set; }
     public bool TakeProfitConfirmed { get; set; }
     public string Protection { get; set; } = "CHƯA XÁC MINH";
-    public string Health { get; set; } = "CHƯA ĐÁNH GIÁ";
-    public string Recommendation { get; set; } = "THEO DÕI";
+    public string Health { get; set; } = "CHỈ ĐỌC";
+    public string Recommendation { get; set; } = "KHÔNG CAN THIỆP";
 }
 
 public sealed class OrderRow

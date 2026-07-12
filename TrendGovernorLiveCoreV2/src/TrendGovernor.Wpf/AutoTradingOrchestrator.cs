@@ -12,9 +12,11 @@ public sealed partial class MainWindow
     private readonly FundingIntelligenceService _fundingIntel = new();
     private readonly SemaphoreSlim _autoCycleGate = new(1, 1);
     private readonly SemaphoreSlim _autoExecutionGate = new(1, 1);
-    private readonly Dictionary<string, int> _stableCandidateCycles = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, FrozenTradePlan> _activePlans = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, decimal> _peakNetPnl = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Pack14Runtime _pack14 = new(AppContext.BaseDirectory, SessionOwnershipRegistry.SessionId);
+    private readonly TradingConfig _pack14Config = new();
+    private readonly AnalysisBundleExporter _bundleExporter = new();
 
     private readonly TextBlock _autoState = T("AUTO LIVE: DỪNG", 16, Brushes.Gold, true);
     private readonly Button _startAutoButton = Btn("BẮT ĐẦU AUTO LIVE", "#16784A");
@@ -37,9 +39,10 @@ public sealed partial class MainWindow
         panel.Children.Add(_startAutoButton);
         panel.Children.Add(_emergencyStopButton);
         panel.Children.Add(Btn("LÀM MỚI DỮ LIỆU", "#245EDB", (_, _) => _ = RefreshAllAsync()));
-        panel.Children.Add(Btn("QUÉT THỦ CÔNG", "#275A8C", async (_, _) => await RunAutoCycleAsync(manualOnly: true, _cts.Token)));
-        panel.Children.Add(T("AUTO LIVE tự chạy: đồng bộ → radar → plan → verify → execute → fill → protect → manage → radar.", 11, B("#7F9AB5")));
-        panel.Children.Add(T("QUYỀN SỞ HỮU: chỉ BOT PHIÊN HIỆN TẠI được quản lý/đóng. Vị thế có sẵn và mở tay luôn chỉ đọc.", 11, B("#66D49A"), true));
+        panel.Children.Add(Btn("QUÉT THỦ CÔNG", "#275A8C", async (_, _) => await RunAutoCycleAsync(true, _cts.Token)));
+        panel.Children.Add(Btn("TẠO ZIP PHÂN TÍCH", "#5B4BB7", async (_, _) => await ExportAnalysisBundleAsync()));
+        panel.Children.Add(T("AUTO LIVE: Universe 40 → Lifecycle → Plan → VerifyGrant → OrderIntent → Execute → Fill → Protect → Manage.", 11, B("#7F9AB5")));
+        panel.Children.Add(T("SỞ HỮU: chỉ BOT PHIÊN HIỆN TẠI được quản lý/đóng. Vị thế có sẵn, mở tay và bot phiên cũ luôn chỉ đọc.", 11, B("#66D49A"), true));
         return panel;
     }
 
@@ -48,13 +51,16 @@ public sealed partial class MainWindow
         try
         {
             if (_autoLoopTask is { IsCompleted: false }) return;
-            if (string.IsNullOrWhiteSpace(_apiKey.Text) || string.IsNullOrWhiteSpace(_apiSecret.Password))
-                throw new InvalidOperationException("Nhập API Key và API Secret trước khi bắt đầu AUTO LIVE.");
+            if (!CredentialRules.IsUsable(_apiKey.Text) || !CredentialRules.IsUsable(_apiSecret.Password))
+                throw new InvalidOperationException("API Key/Secret chưa hợp lệ hoặc vẫn là placeholder.");
             if (!decimal.TryParse(_margin.Text, NumberStyles.Any, CultureInfo.InvariantCulture, out var margin) || margin <= 0m || margin > 5m)
                 throw new InvalidOperationException("Margin mỗi lệnh phải lớn hơn 0 và không vượt 5 USDT ở giai đoạn hiện tại.");
             if (!int.TryParse(_leverage.Text, out var leverage) || leverage is < 1 or > 5)
                 throw new InvalidOperationException("Đòn bẩy giai đoạn hiện tại chỉ cho phép 1x–5x.");
 
+            _pack14Config.MarginPerTrade = margin;
+            _pack14Config.Leverage = leverage;
+            _pack14Config.AutoLiveEnabled = true;
             _binance.SetCredentials(_apiKey.Text, _apiSecret.Password);
             _execution.SetCredentials(_apiKey.Text, _apiSecret.Password);
             _fundingIntel.SetCredentials(_apiKey.Text, _apiSecret.Password);
@@ -74,7 +80,7 @@ public sealed partial class MainWindow
             _autoState.Foreground = Brushes.LimeGreen;
             _startAutoButton.IsEnabled = false;
             _emergencyStopButton.IsEnabled = true;
-            Log("AUTO", $"Bắt đầu AUTO LIVE; session {SessionOwnershipRegistry.SessionId}; margin {margin:0.##} USDT, leverage {leverage}x. Mọi vị thế có sẵn/mở tay là READ-ONLY.");
+            Log("AUTO", $"Bắt đầu Pack 14; session {_pack14.SessionId}; margin {margin:0.##} USDT, leverage {leverage}x.");
         }
         catch (Exception ex)
         {
@@ -93,17 +99,14 @@ public sealed partial class MainWindow
         _autoState.Foreground = Brushes.OrangeRed;
         _startAutoButton.IsEnabled = true;
         _emergencyStopButton.IsEnabled = false;
-        Log("EMERGENCY", "Đã khóa lệnh mới và dừng vòng AUTO. Chỉ đóng BOT PHIÊN HIỆN TẠI.");
+        Log("EMERGENCY", "Đã khóa lệnh mới. Chỉ xử lý BOT PHIÊN HIỆN TẠI.");
 
         try
         {
             await RefreshPrivateAsync(_cts.Token);
             foreach (var position in _state.Positions.Where(p => SessionOwnershipRegistry.IsCurrentSessionBotOwned(p.Symbol)).ToList())
             {
-                var exitSide = position.Side == "LONG" ? "SELL" : "BUY";
-                await _execution.EmergencyCloseAsync(position.Symbol, exitSide, position.Quantity, _cts.Token);
-                SessionOwnershipRegistry.Release(position.Symbol);
-                Log("EMERGENCY", $"Đã đóng reduce-only BOT PHIÊN HIỆN TẠI {position.Symbol}.");
+                await CloseOwnedPositionAndVerifyAsync(position, "EMERGENCY_STOP", _cts.Token);
             }
             await RefreshPrivateAsync(_cts.Token);
         }
@@ -119,13 +122,10 @@ public sealed partial class MainWindow
         {
             try
             {
-                await RunAutoCycleAsync(manualOnly: false, ct);
-                await Task.Delay(TimeSpan.FromSeconds(60), ct);
+                await RunAutoCycleAsync(false, ct);
+                await Task.Delay(TimeSpan.FromSeconds(_pack14Config.ScanIntervalSeconds), ct);
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                break;
-            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
             catch (Exception ex)
             {
                 AddAlert("AUTO LOOP", ex.Message);
@@ -140,27 +140,19 @@ public sealed partial class MainWindow
         if (!await _autoCycleGate.WaitAsync(0, ct)) return;
         try
         {
-            SetStatus("AUTO: ĐỒNG BỘ BINANCE", Brushes.Gold);
+            SetStatus("AUTO: TẠO UNIVERSE 40 COIN", Brushes.Gold);
             var markets = await _binance.LoadTopMarketsAsync(ct);
-            var previous = _state.Markets.ToDictionary(x => x.Symbol, StringComparer.OrdinalIgnoreCase);
             _state.Markets.Clear();
-            foreach (var market in markets)
-            {
-                if (previous.TryGetValue(market.Symbol, out var old)) market.StableCycles = old.StableCycles;
-                _state.Markets.Add(market);
-            }
+            foreach (var market in markets) _state.Markets.Add(market);
             _marketCount.Text = markets.Count.ToString(CultureInfo.InvariantCulture);
 
-            SetStatus("AUTO: PHÂN TÍCH TREND DÀI / SÓNG LỚN", Brushes.Gold);
-            var deep = _state.Markets.Take(24).ToList();
+            SetStatus("AUTO: PHÂN TÍCH 40 COIN ĐA KHUNG", Brushes.Gold);
+            var deep = _state.Markets.Take(_pack14Config.DeepScanCount).ToList();
             using var semaphore = new SemaphoreSlim(4);
-            var tasks = deep.Select(async row =>
+            await Task.WhenAll(deep.Select(async row =>
             {
                 await semaphore.WaitAsync(ct);
-                try
-                {
-                    await _largeWave.AnalyzeAsync(row, ct);
-                }
+                try { await _largeWave.AnalyzeAsync(row, ct); }
                 catch (Exception ex)
                 {
                     row.Direction = "WAIT";
@@ -168,171 +160,193 @@ public sealed partial class MainWindow
                     row.Reason = ex.Message;
                     row.AutoEligible = false;
                 }
-                finally
-                {
-                    semaphore.Release();
-                }
-            });
-            await Task.WhenAll(tasks);
+                finally { semaphore.Release(); }
+            }));
 
-            decimal plannedNotional = 0m;
-            if (decimal.TryParse(_margin.Text, NumberStyles.Any, CultureInfo.InvariantCulture, out var margin) &&
-                int.TryParse(_leverage.Text, out var leverage))
-                plannedNotional = Math.Max(0m, margin * leverage);
-
-            SetStatus("AUTO: PHÂN TÍCH FUNDING", Brushes.Gold);
+            var plannedNotional = _pack14Config.MarginPerTrade * _pack14Config.Leverage;
+            SetStatus("AUTO: FUNDING + CANDIDATE LIFECYCLE", Brushes.Gold);
             await _fundingIntel.EnrichMarketsAsync(deep, plannedNotional, ct);
+            var snapshotId = $"snap-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+
             foreach (var row in deep)
             {
                 var technicalScore = row.Score;
                 row.Score = Math.Clamp((int)Math.Round(technicalScore * 0.90m + row.FundingScore * 0.10m), 0, 100);
-                var fundingBlocked = row.FundingWarning.StartsWith("BLOCK:", StringComparison.OrdinalIgnoreCase);
-                if (fundingBlocked)
+                if (row.FundingWarning.StartsWith("BLOCK:", StringComparison.OrdinalIgnoreCase))
                 {
                     row.AutoEligible = false;
                     row.Status = "BLOCK FUNDING CỰC ĐOAN";
                     row.Reason = row.FundingWarning;
                 }
-
-                if (row.AutoEligible)
-                {
-                    _stableCandidateCycles.TryGetValue(row.Symbol, out var cycles);
-                    row.StableCycles = cycles + 1;
-                    _stableCandidateCycles[row.Symbol] = row.StableCycles;
-                }
-                else
-                {
-                    row.StableCycles = 0;
-                    _stableCandidateCycles.Remove(row.Symbol);
-                }
+                await _pack14.ObserveAsync(row, snapshotId, _pack14Config.RequiredStableCycles, ct);
             }
 
             var ordered = _state.Markets
-                .OrderByDescending(x => x.AutoEligible)
+                .OrderByDescending(x => x.CandidateStage == CandidateStage.PlanReady.ToString())
+                .ThenByDescending(x => x.AutoEligible)
                 .ThenByDescending(x => x.StableCycles)
                 .ThenByDescending(x => x.Score)
-                .ThenByDescending(x => x.FundingFavorsDirection)
+                .ThenByDescending(x => x.UniverseScore)
                 .ThenByDescending(x => x.WaveScore)
-                .ThenByDescending(x => x.QuoteVolume)
                 .ToList();
+
             _state.Markets.Clear();
             foreach (var row in ordered) _state.Markets.Add(row);
+            SyncPack14UiState();
             _marketGrid.Items.Refresh();
             _radarGrid.Items.Refresh();
 
-            var eligible = ordered.Count(x => x.AutoEligible);
+            var eligible = ordered.Count(x => x.CandidateStage == CandidateStage.PlanReady.ToString());
             _candidateCount.Text = eligible.ToString(CultureInfo.InvariantCulture);
-            var selected = ordered.FirstOrDefault(x => x.AutoEligible && x.StableCycles >= 2) ?? ordered.FirstOrDefault();
+            var selected = ordered.FirstOrDefault(x => x.CandidateStage == CandidateStage.PlanReady.ToString()) ?? ordered.FirstOrDefault();
             if (selected != null) await SelectCandidateAsync(selected);
-            Log("RADAR", $"Phân tích sâu {deep.Count} cặp; {eligible} ứng viên; {ordered.Count(x => x.StableCycles >= 2)} ổn định >=2 chu kỳ.");
+            Log("RADAR", $"Universe {ordered.Count}; PlanReady {eligible}; snapshot {snapshotId}.");
 
             if (_binance.HasCredentials) await RefreshPrivateAsync(ct);
-            await ManageOpenPositionsAsync(ct);
+            await MonitorOpenPositionsAsync(ct);
 
             if (manualOnly || _blockNewEntries) return;
-            if (_state.Positions.Count >= 1)
+            if (_state.Positions.Count >= _pack14Config.MaxPositions)
             {
-                SetStatus("AUTO: ĐANG QUẢN LÝ / QUAN SÁT VỊ THẾ", Brushes.LightSkyBlue);
+                SetStatus("AUTO: ĐANG QUẢN LÝ VỊ THẾ", Brushes.LightSkyBlue);
                 return;
             }
 
-            var candidate = ordered.FirstOrDefault(x => x.AutoEligible && x.StableCycles >= 2);
+            var candidate = ordered.FirstOrDefault(x => x.CandidateStage == CandidateStage.PlanReady.ToString());
             if (candidate == null)
             {
-                SetStatus("AUTO: CHƯA CÓ ỨNG VIÊN ĐỦ CHUẨN", Brushes.Gold);
+                SetStatus("AUTO: CHƯA CÓ ỨNG VIÊN PLAN_READY", Brushes.Gold);
                 return;
             }
 
             await ExecuteAutoCandidateAsync(candidate, ct);
             SetStatus("AUTO: HOÀN TẤT CHU KỲ", Brushes.LimeGreen);
         }
-        finally
-        {
-            _autoCycleGate.Release();
-        }
+        finally { _autoCycleGate.Release(); }
     }
 
-    private async Task ExecuteAutoCandidateAsync(MarketRow candidate, CancellationToken ct)
+    private async Task ExecuteAutoCandidateAsync(MarketRow market, CancellationToken ct)
     {
         if (!await _autoExecutionGate.WaitAsync(0, ct)) return;
+        CandidateRecord? candidate = null;
+        OrderIntent? intent = null;
+        ExecutionFill? fill = null;
+        FrozenTradePlan? plan = null;
         try
         {
-            if (_blockNewEntries || _state.Positions.Count >= 1) return;
-            if (!decimal.TryParse(_margin.Text, NumberStyles.Any, CultureInfo.InvariantCulture, out var margin) || margin <= 0m)
-                throw new InvalidOperationException("Margin không hợp lệ.");
-            if (!int.TryParse(_leverage.Text, out var leverage))
-                throw new InvalidOperationException("Đòn bẩy không hợp lệ.");
+            if (_blockNewEntries || _state.Positions.Count >= _pack14Config.MaxPositions) return;
+            candidate = _pack14.FindCandidate(market.Symbol)
+                ?? throw new InvalidOperationException("Candidate lifecycle không tồn tại.");
+            if (candidate.Stage != CandidateStage.PlanReady)
+                throw new InvalidOperationException($"Candidate chưa PLAN_READY: {candidate.Stage}.");
 
-            var plan = FrozenTradePlan.FromCandidate(candidate, margin, leverage);
-            _activePlans[candidate.Symbol] = plan;
-            Log("PLAN", $"{plan.PlanId}: {plan.Direction} {plan.Symbol}, entry {plan.EntryLow:0.########}-{plan.EntryHigh:0.########}, SL {plan.StopLoss:0.########}, TP {plan.TakeProfit:0.########}, RR {plan.RiskReward:0.00}.");
+            plan = FrozenTradePlan.FromCandidate(market, _pack14Config.MarginPerTrade, _pack14Config.Leverage);
+            _activePlans[market.Symbol] = plan;
+            await _pack14.RecordPlanAsync(candidate, plan, ct);
 
-            if (plan.IsExpired || plan.Score < 80 || plan.StableCycles < 2 || plan.RiskReward < 2m)
-                throw new InvalidOperationException("Kế hoạch hết hạn hoặc chưa đạt VERIFY.");
-            if (candidate.FundingWarning.StartsWith("BLOCK:", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException(candidate.FundingWarning);
-            if (candidate.Price < plan.EntryLow || candidate.Price > plan.EntryHigh)
+            var rules = await _execution.GetRulesAsync(market.Symbol, ct);
+            var quantity = _execution.NormalizeQuantity(plan.MarginUsdt * plan.Leverage / market.Price, rules);
+            await _execution.EnsureIsolatedAsync(market.Symbol, ct);
+            await _execution.SetLeverageAsync(market.Symbol, plan.Leverage, ct);
+
+            var grant = await _pack14.VerifyAsync(
+                candidate,
+                plan,
+                market,
+                rules,
+                quantity,
+                accountIsOneWay: true,
+                isolatedReady: true,
+                _state.Positions.Count,
+                _pack14Config.MaxPositions,
+                _blockNewEntries,
+                ct);
+            SyncPack14UiState();
+
+            if (!grant.Passed)
             {
-                Log("VERIFY", $"{candidate.Symbol}: giá {candidate.Price:0.########} chưa nằm trong vùng vào; tiếp tục chờ, không đuổi giá.");
+                _pack14.RecordMissed(market.Symbol, candidate.CandidateId, candidate.Stage.ToString(), "VERIFY_BLOCKED",
+                    string.Join("; ", grant.Gates.Where(x => !x.Passed).Select(x => $"{x.GateCode}:{x.Reason}")));
+                Log("VERIFY", $"{market.Symbol}: BLOCK — {string.Join(", ", grant.Gates.Where(x => !x.Passed).Select(x => x.GateCode))}");
                 return;
             }
-            if (candidate.Direction == "LONG" && !(plan.StopLoss < candidate.Price && plan.TakeProfit > candidate.Price))
-                throw new InvalidOperationException("SL/TP LONG không nằm đúng phía giá hiện tại.");
-            if (candidate.Direction == "SHORT" && !(plan.TakeProfit < candidate.Price && plan.StopLoss > candidate.Price))
-                throw new InvalidOperationException("SL/TP SHORT không nằm đúng phía giá hiện tại.");
 
-            var rules = await _execution.GetRulesAsync(candidate.Symbol, ct);
-            var quantity = _execution.NormalizeQuantity(margin * leverage / candidate.Price, rules);
-            if (quantity <= 0m) throw new InvalidOperationException("Khối lượng sau chuẩn hóa bằng 0.");
-            if (rules.MinNotional > 0m && quantity * candidate.Price < rules.MinNotional)
-                throw new InvalidOperationException($"Notional {quantity * candidate.Price:0.########} dưới minimum {rules.MinNotional:0.########} của Binance.");
+            intent = await _pack14.CreateIntentAsync(grant, plan, quantity, candidate, ct);
+            await _pack14.MarkOrderSubmittedAsync(candidate, intent, ct);
+            fill = await _execution.PlaceMarketAndWaitFillAsync(intent, ct);
+            await _pack14.MarkOrderTerminalAsync(candidate, intent, fill, ct);
 
+            if (fill.Status != "FILLED" || fill.ExecutedQuantity <= 0m || fill.AveragePrice <= 0m)
+                throw new InvalidOperationException($"Order kết thúc {fill.Status}, không có full fill.");
+
+            SessionOwnershipRegistry.RegisterFilled(market.Symbol, fill.ClientOrderId, fill.OrderId);
             var stop = _execution.NormalizePrice(plan.StopLoss, rules);
             var takeProfit = _execution.NormalizePrice(plan.TakeProfit, rules);
-            await _execution.EnsureIsolatedAsync(candidate.Symbol, ct);
-            await _execution.SetLeverageAsync(candidate.Symbol, leverage, ct);
-            Log("VERIFY", $"{candidate.Symbol}: ISOLATED, leverage {leverage}x, qty {quantity}, tick {rules.TickSize}, step {rules.StepSize}.");
+            if (!ValidProtectionGeometry(plan.Direction, fill.AveragePrice, stop, takeProfit))
+                throw new InvalidOperationException("Sau Fill, hình học SL/TP không còn hợp lệ.");
 
-            var fill = await _execution.PlaceMarketAndWaitFillAsync(candidate.Symbol, plan.EntrySide, quantity, ct);
-            if (fill.Status != "FILLED" || fill.ExecutedQuantity <= 0m || fill.AveragePrice <= 0m)
-                throw new InvalidOperationException("Không có FILL thật đầy đủ; không đặt protection theo phỏng đoán.");
-
-            SessionOwnershipRegistry.RegisterFilled(candidate.Symbol, fill.ClientOrderId, fill.OrderId);
-            Log("FILL", $"{candidate.Symbol}: FILLED {fill.ExecutedQuantity} @ {fill.AveragePrice:0.########}, order {fill.OrderId}; ownership={SessionOwnershipRegistry.SessionId}.");
-
-            if (candidate.Direction == "LONG" && !(stop < fill.AveragePrice && takeProfit > fill.AveragePrice))
-                throw new InvalidOperationException("Sau fill, SL/TP LONG không còn hợp lệ.");
-            if (candidate.Direction == "SHORT" && !(takeProfit < fill.AveragePrice && stop > fill.AveragePrice))
-                throw new InvalidOperationException("Sau fill, SL/TP SHORT không còn hợp lệ.");
-
-            var protection = await _execution.PlaceAndVerifyProtectionAsync(candidate.Symbol, plan.ExitSide, fill.ExecutedQuantity, stop, takeProfit, ct);
+            var protection = await _execution.PlaceAndVerifyProtectionAsync(market.Symbol, plan.ExitSide, fill.ExecutedQuantity, stop, takeProfit, ct);
+            await _pack14.MarkProtectionAsync(candidate, intent.OrderIntentId, protection, ct);
             if (!protection.IsProtected)
-            {
-                _blockNewEntries = true;
-                await _execution.EmergencyCloseAsync(candidate.Symbol, plan.ExitSide, fill.ExecutedQuantity, ct);
-                SessionOwnershipRegistry.Release(candidate.Symbol);
-                AddAlert("EMERGENCY_UNPROTECTED", $"{candidate.Symbol}: BOT PHIÊN HIỆN TẠI không xác minh đủ SL/TP, đã đóng reduce-only và khóa lệnh mới.");
-                throw new InvalidOperationException("Protection không đầy đủ; đã kích hoạt emergency close.");
-            }
+                throw new InvalidOperationException("Không xác minh đủ SL/TP sau Fill.");
 
-            Log("PROTECT", $"{candidate.Symbol}: SL algo {protection.StopAlgoId}, TP algo {protection.TakeProfitAlgoId} đã xác minh NEW.");
-            var tradeLine = $"{DateTime.Now:HH:mm:ss} {candidate.Symbol} {candidate.Direction} {fill.ExecutedQuantity} @ {fill.AveragePrice:0.########} — BOT PHIÊN HIỆN TẠI — PROTECTED{Environment.NewLine}";
-            _recentTrades.AppendText(tradeLine);
-            _recentTradesFull.AppendText(tradeLine);
+            Log("PROTECT", $"{market.Symbol}: SL {protection.StopAlgoId}, TP {protection.TakeProfitAlgoId} đã xác minh.");
             await RefreshPrivateAsync(ct);
+            SyncPack14UiState();
         }
         catch (Exception ex)
         {
             AddAlert("AUTO EXECUTION", ex.Message);
             Log("AUTO EXECUTION", ex.ToString());
+            if (fill is { ExecutedQuantity: > 0m } && SessionOwnershipRegistry.IsCurrentSessionBotOwned(fill.Symbol))
+                await CompensateUnprotectedFillAsync(fill, plan, intent, ex, ct);
         }
-        finally
+        finally { _autoExecutionGate.Release(); }
+    }
+
+    private async Task CompensateUnprotectedFillAsync(
+        ExecutionFill fill,
+        FrozenTradePlan? plan,
+        OrderIntent? intent,
+        Exception cause,
+        CancellationToken ct)
+    {
+        _blockNewEntries = true;
+        try
         {
-            _autoExecutionGate.Release();
+            await RefreshPrivateAsync(ct);
+            var position = _state.Positions.FirstOrDefault(x => string.Equals(x.Symbol, fill.Symbol, StringComparison.OrdinalIgnoreCase));
+            if (position is null)
+            {
+                SessionOwnershipRegistry.Release(fill.Symbol);
+                return;
+            }
+
+            if (plan is not null)
+            {
+                try
+                {
+                    var rules = await _execution.GetRulesAsync(fill.Symbol, ct);
+                    var stop = _execution.NormalizePrice(plan.StopLoss, rules);
+                    var tp = _execution.NormalizePrice(plan.TakeProfit, rules);
+                    var retry = await _execution.PlaceAndVerifyProtectionAsync(fill.Symbol, plan.ExitSide, position.Quantity, stop, tp, ct);
+                    var candidate = _pack14.FindCandidate(fill.Symbol);
+                    if (candidate is not null) await _pack14.MarkProtectionAsync(candidate, intent?.OrderIntentId ?? fill.ClientOrderId, retry, ct);
+                    if (retry.IsProtected) return;
+                }
+                catch (Exception retryEx) { Log("PROTECTION RETRY", retryEx.Message); }
+            }
+
+            await CloseOwnedPositionAndVerifyAsync(position, "UNPROTECTED_COMPENSATION", ct);
+            AddAlert("EMERGENCY_UNPROTECTED", $"{fill.Symbol}: đã đóng và xác minh sau lỗi protection: {cause.Message}");
+        }
+        catch (Exception closeEx)
+        {
+            AddAlert("CRITICAL_CLOSE_FAILURE", $"{fill.Symbol}: không xác minh được emergency close: {closeEx.Message}");
         }
     }
 
-    private async Task ManageOpenPositionsAsync(CancellationToken ct)
+    private async Task MonitorOpenPositionsAsync(CancellationToken ct)
     {
         foreach (var position in _state.Positions.ToList())
         {
@@ -345,51 +359,108 @@ public sealed partial class MainWindow
             }
 
             position.Owner = "BOT";
+            var analysis = new MarketRow { Symbol = position.Symbol, Price = position.MarkPrice };
+            try
+            {
+                await _largeWave.AnalyzeAsync(analysis, ct);
+                await _fundingIntel.EnrichMarketsAsync([analysis], Math.Abs(position.MarkPrice * position.Quantity), ct);
+            }
+            catch (Exception ex) { Log("POSITION MONITOR", $"{position.Symbol}: {ex.Message}"); }
+
             var netPnl = position.NetPnlAfterFunding;
-            if (!_peakNetPnl.TryGetValue(position.Symbol, out var peak) || netPnl > peak)
-                _peakNetPnl[position.Symbol] = netPnl;
+            if (!_peakNetPnl.TryGetValue(position.Symbol, out var peak) || netPnl > peak) _peakNetPnl[position.Symbol] = netPnl;
             peak = _peakNetPnl[position.Symbol];
             position.PeakNetPnl = peak;
-            position.PeakUnrealizedPnl = Math.Max(position.PeakUnrealizedPnl, position.UnrealizedPnl);
             position.GivebackPercent = peak > 0m ? Math.Max(0m, (peak - netPnl) / peak * 100m) : 0m;
 
-            var market = _state.Markets.FirstOrDefault(x => string.Equals(x.Symbol, position.Symbol, StringComparison.OrdinalIgnoreCase));
-            var wrongDirection = market != null && market.TrendScore >= 80 &&
-                                 ((position.Side == "LONG" && market.Direction == "SHORT") ||
-                                  (position.Side == "SHORT" && market.Direction == "LONG"));
+            var wrongDirection = analysis.TrendScore >= 80 &&
+                ((position.Side == "LONG" && analysis.Direction == "SHORT") ||
+                 (position.Side == "SHORT" && analysis.Direction == "LONG"));
             var protectProfit = peak >= 0.5m && position.GivebackPercent >= 35m;
+
+            await _pack14.MarkManagingAsync(position.Symbol, "POSITION_MONITOR", new
+            {
+                position.Side,
+                analysis.Direction,
+                analysis.TrendScore,
+                peak,
+                netPnl,
+                position.GivebackPercent,
+                wrongDirection,
+                protectProfit
+            }, ct);
 
             if (!position.StopLossConfirmed)
             {
                 _blockNewEntries = true;
-                var exitSide = position.Side == "LONG" ? "SELL" : "BUY";
-                await _execution.EmergencyCloseAsync(position.Symbol, exitSide, position.Quantity, ct);
-                SessionOwnershipRegistry.Release(position.Symbol);
-                position.Recommendation = "ĐÓNG KHẨN CẤP — BOT PHIÊN HIỆN TẠI THIẾU HARD SL";
-                AddAlert("EMERGENCY_UNPROTECTED", $"{position.Symbol}: BOT PHIÊN HIỆN TẠI thiếu hard SL, đã đóng reduce-only.");
+                await CloseOwnedPositionAndVerifyAsync(position, "MISSING_HARD_SL", ct);
                 continue;
             }
 
             if (wrongDirection || protectProfit)
+                await CloseOwnedPositionAndVerifyAsync(position, wrongDirection ? "WRONG_DIRECTION" : "PROFIT_GIVEBACK", ct);
+            else
             {
-                var exitSide = position.Side == "LONG" ? "SELL" : "BUY";
-                await _execution.EmergencyCloseAsync(position.Symbol, exitSide, position.Quantity, ct);
-                position.Recommendation = wrongDirection ? "ĐÓNG — SAI XU HƯỚNG" : "ĐÓNG — BẢO VỆ NET PNL";
-                Log("MANAGE", $"{position.Symbol}: {position.Recommendation}; peak net {peak:0.00}, current net {netPnl:0.00}, giveback {position.GivebackPercent:0.0}%.");
+                position.Health = "BOT PHIÊN HIỆN TẠI — ĐANG GIÁM SÁT RIÊNG";
+                position.Recommendation = position.TakeProfitConfirmed ? "GIỮ / BẢO VỆ" : "GIỮ CÓ SL / RETRY TP";
+            }
+        }
+        SyncPack14UiState();
+    }
+
+    private async Task CloseOwnedPositionAndVerifyAsync(PositionRow position, string reason, CancellationToken ct)
+    {
+        if (!SessionOwnershipRegistry.IsCurrentSessionBotOwned(position.Symbol)) return;
+        var exitSide = position.Side == "LONG" ? "SELL" : "BUY";
+        await _execution.EmergencyCloseAsync(position.Symbol, exitSide, position.Quantity, ct);
+
+        var deadline = DateTime.UtcNow.AddSeconds(12);
+        while (DateTime.UtcNow < deadline)
+        {
+            var positions = await _binance.GetPositionsAsync(ct);
+            if (!positions.Any(x => string.Equals(x.Symbol, position.Symbol, StringComparison.OrdinalIgnoreCase)))
+            {
+                await _pack14.MarkClosedAsync(position.Symbol, reason, new { position.Quantity, position.Side }, ct);
                 SessionOwnershipRegistry.Release(position.Symbol);
                 _activePlans.Remove(position.Symbol);
                 _peakNetPnl.Remove(position.Symbol);
+                Log("CLOSE", $"{position.Symbol}: {reason}; đã xác minh position=0.");
+                return;
             }
-            else
-            {
-                position.Health = "BOT PHIÊN HIỆN TẠI — XU HƯỚNG CÒN HỢP LỆ";
-                position.Recommendation = position.TakeProfitConfirmed ? "GIỮ / TIẾP TỤC BẢO VỆ" : "GIỮ CÓ SL / RETRY TP";
-            }
+            await Task.Delay(500, ct);
         }
+        throw new InvalidOperationException($"{position.Symbol}: đã gửi reduce-only nhưng chưa xác minh position=0.");
     }
 
-    private void ExecutionEventReceived(string eventType, string payload)
+    private void SyncPack14UiState()
     {
-        Log("BINANCE USER STREAM", eventType);
+        _state.Lifecycle.Clear();
+        foreach (var row in _pack14.BuildLifecycleRows()) _state.Lifecycle.Add(row);
+        _state.VerifyMatrix.Clear();
+        foreach (var row in _pack14.BuildVerifyRows()) _state.VerifyMatrix.Add(row);
+        RefreshPack14Ui();
     }
+
+    private async Task ExportAnalysisBundleAsync()
+    {
+        try
+        {
+            var output = Path.Combine(AppContext.BaseDirectory, "analysis");
+            var zip = await _bundleExporter.ExportPack14Async(
+                output,
+                _pack14,
+                _pack14Config,
+                _activePlans.Values.ToArray(),
+                _state.Positions.ToArray(),
+                _state.Orders.ToArray(),
+                _cts.Token);
+            MessageBox.Show($"Đã tạo:\n{zip}", "ANALYSIS BUNDLE", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex) { AddAlert("ANALYSIS BUNDLE", ex.Message); }
+    }
+
+    private static bool ValidProtectionGeometry(string direction, decimal price, decimal stop, decimal tp)
+        => direction == "LONG" ? stop < price && tp > price : direction == "SHORT" && tp < price && stop > price;
+
+    private void ExecutionEventReceived(string eventType, string payload) => Log("BINANCE USER STREAM", eventType);
 }

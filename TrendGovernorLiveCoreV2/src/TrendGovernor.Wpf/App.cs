@@ -1,4 +1,5 @@
 using System.IO;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -18,6 +19,9 @@ public static class AppEntry
             app.DispatcherUnhandledException += OnDispatcherUnhandledException;
             var window = new MainWindow();
             window.InitializeFundingUi();
+            window.GetType()
+                .GetMethod("InitializeCredentialThemeAndFundingUi", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.Invoke(window, null);
             app.Run(window);
             WriteLog("EXIT", "Ứng dụng đã đóng bình thường.");
         }

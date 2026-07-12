@@ -184,10 +184,10 @@ public sealed class TradingConfig
     public int Leverage { get; set; } = 3;
     public int MaxPositions { get; set; } = 1;
     public int DeepScanCount { get; set; } = 40;
-    public int ScanIntervalSeconds { get; set; } = 60;
-    public int RequiredStableCycles { get; set; } = 2;
-    public int MinimumScore { get; set; } = 80;
-    public decimal MinimumRiskReward { get; set; } = 2.0m;
+    public int ScanIntervalSeconds { get; set; } = 30;
+    public int RequiredStableCycles { get; set; } = 1;
+    public int MinimumScore { get; set; } = 75;
+    public decimal MinimumRiskReward { get; set; } = 1.80m;
     public bool RequireIsolated { get; set; } = true;
     public bool AutoLiveEnabled { get; set; }
     public int FundingWeightPercent { get; set; } = 10;

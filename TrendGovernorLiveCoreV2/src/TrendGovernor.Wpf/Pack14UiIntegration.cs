@@ -16,6 +16,9 @@ public sealed partial class MainWindow
         {
             _lifecycleGrid.ItemsSource = _state.Lifecycle;
             _verifyMatrixGrid.ItemsSource = _state.VerifyMatrix;
+            AddUniverseColumns(_marketGrid, compact: true);
+            AddUniverseColumns(_radarGrid, compact: false);
+
             var tabs = FindDescendant<TabControl>(this);
             if (tabs is null) return;
             if (tabs.Items.OfType<TabItem>().Any(x => Equals(x.Tag, "PACK14"))) return;
@@ -26,6 +29,17 @@ public sealed partial class MainWindow
                 Content = Pack14Workspace()
             });
         };
+    }
+
+    private static void AddUniverseColumns(DataGrid grid, bool compact)
+    {
+        if (grid.Columns.Any(x => string.Equals(Convert.ToString(x.Header), "HẠNG", StringComparison.OrdinalIgnoreCase))) return;
+        grid.Columns.Insert(0, C("HẠNG", "RadarRank", 52));
+        grid.Columns.Insert(Math.Min(2, grid.Columns.Count), C("NGUỒN CHỌN", "UniverseSource", compact ? 125 : 155));
+        grid.Columns.Insert(Math.Min(3, grid.Columns.Count), C("ĐIỂM U", "UniverseScore", 62));
+        grid.Columns.Insert(Math.Min(4, grid.Columns.Count), C("BIÊN 24H %", "Range24hPercent", 78, "0.0"));
+        grid.Columns.Insert(Math.Min(5, grid.Columns.Count), C("THANH KHOẢN", "LiquidityTier", 78));
+        grid.Columns.Insert(Math.Min(10, grid.Columns.Count), C("GIAI ĐOẠN", "CandidateStage", 125));
     }
 
     private UIElement Pack14Workspace()

@@ -85,6 +85,7 @@ public sealed class LargeWaveEngine
 
         row.Direction = longAligned ? "LONG" : shortAligned ? "SHORT" : "WAIT";
         row.Setup = "PULLBACK CONTINUATION";
+        ApplyFundingToDirection(row);
 
         var tooHighForLong = row.PositionPercent >= 78m || row.DistanceToEmaPercent > Math.Max(1.2m, row.AtrPercent * 2.2m);
         var tooLowForShort = row.PositionPercent <= 22m || row.DistanceToEmaPercent < -Math.Max(1.2m, row.AtrPercent * 2.2m);
@@ -121,13 +122,19 @@ public sealed class LargeWaveEngine
             row.RiskReward = risk > 0 ? reward / risk : 0m;
         }
 
-        row.Score = Math.Min(100, (int)Math.Round(row.TrendScore * 0.45m + row.WaveScore * 0.35m + row.TimingScore * 0.20m));
+        row.Score = Math.Min(100, (int)Math.Round(row.TrendScore * 0.40m + row.WaveScore * 0.30m + row.TimingScore * 0.20m + row.FundingScore * 0.10m));
         row.LastAnalyzedUtc = DateTime.UtcNow;
 
+        var extremeFundingCost = row.FundingBias == "CHI PHÍ GIỮ LỆNH" && Math.Abs(row.FundingPerHourPercent) >= 0.25m;
         if (!longAligned && !shortAligned)
         {
             row.Status = "XUNG ĐỘT XU HƯỚNG";
-            row.Reason = $"Trend 1D/4H/1H chưa đồng thuận: {row.Trend1D}/{row.Trend4H}/{row.Trend1H}.";
+            row.Reason = $"Trend 1D/4H/1H chưa đồng thuận: {row.Trend1D}/{row.Trend4H}/{row.Trend1H}. Funding {row.FundingFlow}.";
+        }
+        else if (extremeFundingCost)
+        {
+            row.Status = "BLOCK FUNDING CỰC ĐOAN";
+            row.Reason = $"Hướng {row.Direction} phải trả funding {row.FundingRatePercent:+0.####;-0.####;0}%/{row.FundingIntervalHours}H ({row.FundingFlow}); không mở lệnh dù trend đúng.";
         }
         else if (row.Direction == "LONG" && tooHighForLong)
         {
@@ -162,10 +169,36 @@ public sealed class LargeWaveEngine
         else
         {
             row.Status = "ĐỦ ĐIỀU KIỆN";
-            row.Reason = $"Trend {row.Trend1D}/{row.Trend4H}/{row.Trend1H}, {row.WaveState}, ADX {row.Adx1H:0.0}, RR {row.RiskReward:0.00}.";
+            row.Reason = $"Trend {row.Trend1D}/{row.Trend4H}/{row.Trend1H}, {row.WaveState}, ADX {row.Adx1H:0.0}, RR {row.RiskReward:0.00}; funding {row.FundingRatePercent:+0.####;-0.####;0}%/{row.FundingIntervalHours}H {row.FundingFlow}, {row.FundingBias}.";
         }
 
         row.AutoEligible = row.Status == "ĐỦ ĐIỀU KIỆN" && row.Score >= 80 && row.TrendScore >= 80 && row.WaveScore >= 60 && row.RiskReward >= 2m;
+    }
+
+    private static void ApplyFundingToDirection(MarketRow row)
+    {
+        if (row.Direction is not ("LONG" or "SHORT") || row.FundingIntervalHours <= 0)
+        {
+            row.FundingScore = 50;
+            row.FundingBias = "TRUNG LẬP";
+            return;
+        }
+
+        var receives = (row.Direction == "LONG" && row.FundingRate < 0m) || (row.Direction == "SHORT" && row.FundingRate > 0m);
+        var pays = (row.Direction == "LONG" && row.FundingRate > 0m) || (row.Direction == "SHORT" && row.FundingRate < 0m);
+        row.FundingFavorsDirection = receives;
+        row.FundingBias = receives ? "CÙNG LỢI ÍCH" : pays ? "CHI PHÍ GIỮ LỆNH" : "TRUNG LẬP";
+        var hourly = Math.Abs(row.FundingPerHourPercent);
+        var score = 50;
+        if (receives) score += hourly switch { >= 0.25m => 15, >= 0.05m => 12, >= 0.01m => 8, _ => 3 };
+        if (pays) score -= hourly switch { >= 0.25m => 35, >= 0.05m => 22, >= 0.01m => 10, _ => 3 };
+        if (row.FundingSameSignPeriods >= 6) score += receives ? 5 : pays ? -5 : 0;
+        row.FundingScore = Math.Clamp(score, 0, 100);
+        row.FundingWarning = receives && hourly >= 0.25m
+            ? "Funding nhận cực đoan, chỉ dùng làm ưu tiên phụ khi trend và entry đều đúng."
+            : pays && hourly >= 0.25m
+                ? "Hướng giao dịch phải trả funding cực đoan."
+                : "";
     }
 
     private static string TrendName(decimal fast, decimal mid, decimal slow)

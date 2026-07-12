@@ -9,12 +9,13 @@ public sealed partial class MainWindow
 {
     private readonly BinanceExecutionGateway _execution = new();
     private readonly LargeWaveEngine _largeWave = new();
+    private readonly FundingIntelligenceService _fundingIntel = new();
     private readonly SemaphoreSlim _autoCycleGate = new(1, 1);
     private readonly SemaphoreSlim _autoExecutionGate = new(1, 1);
     private readonly Dictionary<string, int> _stableCandidateCycles = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, FrozenTradePlan> _activePlans = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _botOwnedSymbols = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, decimal> _peakPnl = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, decimal> _peakNetPnl = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly TextBlock _autoState = T("AUTO LIVE: DỪNG", 16, Brushes.Gold, true);
     private readonly Button _startAutoButton = Btn("BẮT ĐẦU AUTO LIVE", "#16784A");
@@ -30,6 +31,7 @@ public sealed partial class MainWindow
         _startAutoButton.Click += StartAutoLiveClicked;
         _emergencyStopButton.Click -= EmergencyStopClicked;
         _emergencyStopButton.Click += EmergencyStopClicked;
+        _emergencyStopButton.IsEnabled = false;
 
         var panel = new StackPanel();
         panel.Children.Add(_autoState);
@@ -37,7 +39,7 @@ public sealed partial class MainWindow
         panel.Children.Add(_emergencyStopButton);
         panel.Children.Add(Btn("LÀM MỚI DỮ LIỆU", "#245EDB", (_, _) => _ = RefreshAllAsync()));
         panel.Children.Add(Btn("QUÉT THỦ CÔNG", "#275A8C", async (_, _) => await RunAutoCycleAsync(manualOnly: true, _cts.Token)));
-        panel.Children.Add(T("AUTO LIVE tự chạy: đồng bộ → radar → kế hoạch → xác minh → gửi lệnh → fill → bảo vệ → quản lý.", 11, B("#7F9AB5")));
+        panel.Children.Add(T("AUTO LIVE tự chạy: đồng bộ → radar → plan → verify → execute → fill → protect → manage → radar.", 11, B("#7F9AB5")));
         return panel;
     }
 
@@ -55,8 +57,10 @@ public sealed partial class MainWindow
 
             _binance.SetCredentials(_apiKey.Text, _apiSecret.Password);
             _execution.SetCredentials(_apiKey.Text, _apiSecret.Password);
+            _fundingIntel.SetCredentials(_apiKey.Text, _apiSecret.Password);
+
             if (await _execution.IsHedgeModeAsync(_cts.Token))
-                throw new InvalidOperationException("Tài khoản đang ở Hedge Mode. AUTO LIVE yêu cầu One-way Mode để tránh mở sai positionSide.");
+                throw new InvalidOperationException("Tài khoản đang ở Hedge Mode. AUTO LIVE yêu cầu One-way Mode.");
 
             await _execution.StartUserDataStreamAsync(_cts.Token);
             _execution.EventReceived -= ExecutionEventReceived;
@@ -94,11 +98,11 @@ public sealed partial class MainWindow
         try
         {
             await RefreshPrivateAsync(_cts.Token);
-            foreach (var position in _state.Positions.Where(p => _botOwnedSymbols.Contains(p.Symbol)).ToList())
+            foreach (var position in _state.Positions.Where(p => p.Owner == "BOT").ToList())
             {
                 var exitSide = position.Side == "LONG" ? "SELL" : "BUY";
                 await _execution.EmergencyCloseAsync(position.Symbol, exitSide, position.Quantity, _cts.Token);
-                Log("EMERGENCY", $"Đã gửi đóng reduce-only vị thế bot-owned {position.Symbol}.");
+                Log("EMERGENCY", $"Đã gửi đóng reduce-only vị thế BOT {position.Symbol}.");
             }
             await RefreshPrivateAsync(_cts.Token);
         }
@@ -117,7 +121,10 @@ public sealed partial class MainWindow
                 await RunAutoCycleAsync(manualOnly: false, ct);
                 await Task.Delay(TimeSpan.FromSeconds(60), ct);
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                break;
+            }
             catch (Exception ex)
             {
                 AddAlert("AUTO LOOP", ex.Message);
@@ -149,7 +156,10 @@ public sealed partial class MainWindow
             var tasks = deep.Select(async row =>
             {
                 await semaphore.WaitAsync(ct);
-                try { await _largeWave.AnalyzeAsync(row, ct); }
+                try
+                {
+                    await _largeWave.AnalyzeAsync(row, ct);
+                }
                 catch (Exception ex)
                 {
                     row.Direction = "WAIT";
@@ -157,12 +167,32 @@ public sealed partial class MainWindow
                     row.Reason = ex.Message;
                     row.AutoEligible = false;
                 }
-                finally { semaphore.Release(); }
+                finally
+                {
+                    semaphore.Release();
+                }
             });
             await Task.WhenAll(tasks);
 
+            decimal plannedNotional = 0m;
+            if (decimal.TryParse(_margin.Text, NumberStyles.Any, CultureInfo.InvariantCulture, out var margin) &&
+                int.TryParse(_leverage.Text, out var leverage))
+                plannedNotional = Math.Max(0m, margin * leverage);
+
+            SetStatus("AUTO: PHÂN TÍCH FUNDING", Brushes.Gold);
+            await _fundingIntel.EnrichMarketsAsync(deep, plannedNotional, ct);
             foreach (var row in deep)
             {
+                var technicalScore = row.Score;
+                row.Score = Math.Clamp((int)Math.Round(technicalScore * 0.90m + row.FundingScore * 0.10m), 0, 100);
+                var fundingBlocked = row.FundingWarning.StartsWith("BLOCK:", StringComparison.OrdinalIgnoreCase);
+                if (fundingBlocked)
+                {
+                    row.AutoEligible = false;
+                    row.Status = "BLOCK FUNDING CỰC ĐOAN";
+                    row.Reason = row.FundingWarning;
+                }
+
                 if (row.AutoEligible)
                 {
                     _stableCandidateCycles.TryGetValue(row.Symbol, out var cycles);
@@ -180,6 +210,7 @@ public sealed partial class MainWindow
                 .OrderByDescending(x => x.AutoEligible)
                 .ThenByDescending(x => x.StableCycles)
                 .ThenByDescending(x => x.Score)
+                .ThenByDescending(x => x.FundingFavorsDirection)
                 .ThenByDescending(x => x.WaveScore)
                 .ThenByDescending(x => x.QuoteVolume)
                 .ToList();
@@ -192,7 +223,7 @@ public sealed partial class MainWindow
             _candidateCount.Text = eligible.ToString(CultureInfo.InvariantCulture);
             var selected = ordered.FirstOrDefault(x => x.AutoEligible && x.StableCycles >= 2) ?? ordered.FirstOrDefault();
             if (selected != null) await SelectCandidateAsync(selected);
-            Log("RADAR", $"Đã phân tích sâu {deep.Count} cặp; {eligible} ứng viên, {ordered.Count(x => x.StableCycles >= 2)} ổn định >=2 chu kỳ.");
+            Log("RADAR", $"Phân tích sâu {deep.Count} cặp; {eligible} ứng viên; {ordered.Count(x => x.StableCycles >= 2)} ổn định >=2 chu kỳ.");
 
             if (_binance.HasCredentials) await RefreshPrivateAsync(ct);
             await ManageOpenPositionsAsync(ct);
@@ -228,7 +259,8 @@ public sealed partial class MainWindow
             if (_blockNewEntries || _state.Positions.Count >= 1) return;
             if (!decimal.TryParse(_margin.Text, NumberStyles.Any, CultureInfo.InvariantCulture, out var margin) || margin <= 0m)
                 throw new InvalidOperationException("Margin không hợp lệ.");
-            if (!int.TryParse(_leverage.Text, out var leverage)) throw new InvalidOperationException("Đòn bẩy không hợp lệ.");
+            if (!int.TryParse(_leverage.Text, out var leverage))
+                throw new InvalidOperationException("Đòn bẩy không hợp lệ.");
 
             var plan = FrozenTradePlan.FromCandidate(candidate, margin, leverage);
             _activePlans[candidate.Symbol] = plan;
@@ -236,6 +268,8 @@ public sealed partial class MainWindow
 
             if (plan.IsExpired || plan.Score < 80 || plan.StableCycles < 2 || plan.RiskReward < 2m)
                 throw new InvalidOperationException("Kế hoạch hết hạn hoặc chưa đạt VERIFY.");
+            if (candidate.FundingWarning.StartsWith("BLOCK:", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(candidate.FundingWarning);
             if (candidate.Price < plan.EntryLow || candidate.Price > plan.EntryHigh)
             {
                 Log("VERIFY", $"{candidate.Symbol}: giá {candidate.Price:0.########} chưa nằm trong vùng vào; tiếp tục chờ, không đuổi giá.");
@@ -279,7 +313,9 @@ public sealed partial class MainWindow
 
             _botOwnedSymbols.Add(candidate.Symbol);
             Log("PROTECT", $"{candidate.Symbol}: SL algo {protection.StopAlgoId}, TP algo {protection.TakeProfitAlgoId} đã xác minh NEW.");
-            _recentTrades.AppendText($"{DateTime.Now:HH:mm:ss} {candidate.Symbol} {candidate.Direction} {fill.ExecutedQuantity} @ {fill.AveragePrice:0.########} — PROTECTED{Environment.NewLine}");
+            var tradeLine = $"{DateTime.Now:HH:mm:ss} {candidate.Symbol} {candidate.Direction} {fill.ExecutedQuantity} @ {fill.AveragePrice:0.########} — PROTECTED{Environment.NewLine}";
+            _recentTrades.AppendText(tradeLine);
+            _recentTradesFull.AppendText(tradeLine);
             await RefreshPrivateAsync(ct);
         }
         catch (Exception ex)
@@ -297,30 +333,33 @@ public sealed partial class MainWindow
     {
         foreach (var position in _state.Positions.ToList())
         {
-            if (!_peakPnl.TryGetValue(position.Symbol, out var peak) || position.UnrealizedPnl > peak)
-                _peakPnl[position.Symbol] = position.UnrealizedPnl;
-            peak = _peakPnl[position.Symbol];
-            position.PeakUnrealizedPnl = peak;
-            position.GivebackPercent = peak > 0m ? Math.Max(0m, (peak - position.UnrealizedPnl) / peak * 100m) : 0m;
+            var netPnl = position.NetPnlAfterFunding;
+            if (!_peakNetPnl.TryGetValue(position.Symbol, out var peak) || netPnl > peak)
+                _peakNetPnl[position.Symbol] = netPnl;
+            peak = _peakNetPnl[position.Symbol];
+            position.PeakNetPnl = peak;
+            position.PeakUnrealizedPnl = Math.Max(position.PeakUnrealizedPnl, position.UnrealizedPnl);
+            position.GivebackPercent = peak > 0m ? Math.Max(0m, (peak - netPnl) / peak * 100m) : 0m;
 
-            if (!_botOwnedSymbols.Contains(position.Symbol))
+            if (position.Owner != "BOT")
             {
-                position.Recommendation = "THEO DÕI VỊ THẾ TAY";
+                position.Recommendation = position.StopLossConfirmed ? "THEO DÕI VỊ THẾ TAY" : "VỊ THẾ TAY THIẾU HARD SL";
                 continue;
             }
 
             var market = _state.Markets.FirstOrDefault(x => string.Equals(x.Symbol, position.Symbol, StringComparison.OrdinalIgnoreCase));
             var wrongDirection = market != null && market.TrendScore >= 80 &&
-                                 ((position.Side == "LONG" && market.Direction == "SHORT") || (position.Side == "SHORT" && market.Direction == "LONG"));
+                                 ((position.Side == "LONG" && market.Direction == "SHORT") ||
+                                  (position.Side == "SHORT" && market.Direction == "LONG"));
             var protectProfit = peak >= 0.5m && position.GivebackPercent >= 35m;
 
-            if (position.Protection == "THIẾU SL/TP")
+            if (!position.StopLossConfirmed)
             {
                 _blockNewEntries = true;
                 var exitSide = position.Side == "LONG" ? "SELL" : "BUY";
                 await _execution.EmergencyCloseAsync(position.Symbol, exitSide, position.Quantity, ct);
-                position.Recommendation = "ĐÓNG KHẨN CẤP — THIẾU BẢO VỆ";
-                AddAlert("EMERGENCY_UNPROTECTED", $"{position.Symbol}: vị thế bot-owned thiếu SL/TP, đã gửi đóng reduce-only.");
+                position.Recommendation = "ĐÓNG KHẨN CẤP — THIẾU HARD SL";
+                AddAlert("EMERGENCY_UNPROTECTED", $"{position.Symbol}: vị thế BOT thiếu hard SL, đã gửi đóng reduce-only.");
                 continue;
             }
 
@@ -328,16 +367,16 @@ public sealed partial class MainWindow
             {
                 var exitSide = position.Side == "LONG" ? "SELL" : "BUY";
                 await _execution.EmergencyCloseAsync(position.Symbol, exitSide, position.Quantity, ct);
-                position.Recommendation = wrongDirection ? "ĐÓNG — SAI XU HƯỚNG" : "ĐÓNG — BẢO VỆ LỢI NHUẬN";
-                Log("MANAGE", $"{position.Symbol}: {position.Recommendation}; peak {peak:0.00}, current {position.UnrealizedPnl:0.00}, giveback {position.GivebackPercent:0.0}%.");
+                position.Recommendation = wrongDirection ? "ĐÓNG — SAI XU HƯỚNG" : "ĐÓNG — BẢO VỆ NET PNL";
+                Log("MANAGE", $"{position.Symbol}: {position.Recommendation}; peak net {peak:0.00}, current net {netPnl:0.00}, giveback {position.GivebackPercent:0.0}%.");
                 _botOwnedSymbols.Remove(position.Symbol);
                 _activePlans.Remove(position.Symbol);
-                _peakPnl.Remove(position.Symbol);
+                _peakNetPnl.Remove(position.Symbol);
             }
             else
             {
                 position.Health = "XU HƯỚNG CÒN HỢP LỆ";
-                position.Recommendation = "GIỮ / TIẾP TỤC BẢO VỆ";
+                position.Recommendation = position.TakeProfitConfirmed ? "GIỮ / TIẾP TỤC BẢO VỆ" : "GIỮ CÓ SL / RETRY TP";
             }
         }
     }

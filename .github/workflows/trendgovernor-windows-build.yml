@@ -100,14 +100,14 @@ jobs:
             if (-not (Test-Path (Join-Path $root $file))) { throw "Missing Pack 16 source: $file" }
           }
           $orchestrator = Get-Content (Join-Path $root 'AutoTradingOrchestrator.cs') -Raw
-          foreach ($token in @('FinalPreSubmitCheckAsync','Pack16RiskPolicy','ProfitRetentionEngine','SessionOwnershipRegistry','CompensateUnprotectedFillAsync')) {
-            if ($orchestrator -notmatch [regex]::Escape($token)) { throw "Pack 16 runtime token missing: $token" }
+          foreach ($token in @('FinalPreSubmitCheckAsync','SessionOwnershipRegistry','CompensateUnprotectedFillAsync','_profitRetention')) {
+            if ($orchestrator -notmatch [regex]::Escape($token)) { throw "Pack 16 orchestrator token missing: $token" }
           }
           if ($orchestrator -match '_stableCandidateCycles') { throw 'Legacy stable-cycle dictionary still exists.' }
           if ($orchestrator -match 'accountIsOneWay:\s*true|isolatedReady:\s*true') { throw 'Hard-coded exchange verification still exists.' }
           $pack16 = Get-Content (Join-Path $root 'Pack16/Pack16RuntimeIntegration.cs') -Raw
-          foreach ($token in @('MaxBotMarginUsdt','MaxBotNotionalUsdt','MaxExposurePercentOfEquity','MaxSpreadPercent','MaxEntryDriftPercent')) {
-            if ($pack16 -notmatch [regex]::Escape($token)) { throw "Pack 16 capital token missing: $token" }
+          foreach ($token in @('Pack16RiskPolicy','ProfitRetentionEngine','MaxBotMarginUsdt','MaxBotNotionalUsdt','MaxExposurePercentOfEquity','MaxSpreadPercent','MaxEntryDriftPercent')) {
+            if ($pack16 -notmatch [regex]::Escape($token)) { throw "Pack 16 integration token missing: $token" }
           }
           Write-Host 'Pack 16 source gates PASS.'
 

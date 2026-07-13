@@ -24,6 +24,7 @@ public static class AppEntry
             window.InitializePack14Ui();
             window.InitializeLiveRuntimeSettingsUi();
             window.InitializeHardGridHeaderTheme();
+            window.InitializePack16();
 
             app.Run(window);
             WriteLog("EXIT", "Ứng dụng đã đóng bình thường.");

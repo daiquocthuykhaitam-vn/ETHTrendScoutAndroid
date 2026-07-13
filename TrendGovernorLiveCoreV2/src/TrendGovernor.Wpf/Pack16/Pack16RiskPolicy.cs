@@ -9,9 +9,6 @@ public sealed class Pack16Config
     public decimal MaxSpreadPercent { get; set; } = 0.20m;
     public decimal MaxEntryDriftPercent { get; set; } = 0.20m;
     public int MaxOpenPositionsPerSymbol { get; set; } = 1;
-    public bool LimitFirstEnabled { get; set; } = true;
-    public int LimitTimeoutSeconds { get; set; } = 8;
-    public bool AllowMarketFallback { get; set; } = true;
     public decimal BreakevenActivationUsdt { get; set; } = 0.20m;
     public decimal ProfitFloorActivationUsdt { get; set; } = 0.50m;
     public decimal MaxProfitGivebackPercent { get; set; } = 30m;
@@ -24,6 +21,7 @@ public sealed record PreSubmitContext(
     decimal AskPrice,
     decimal PlannedEntryLow,
     decimal PlannedEntryHigh,
+    decimal OrderMargin,
     decimal OrderNotional,
     decimal CurrentBotMargin,
     decimal CurrentBotNotional,
@@ -64,9 +62,9 @@ public sealed class Pack16RiskPolicy
             return Fail("SPREAD_TOO_WIDE", $"Spread {spread:0.####}% > {config.MaxSpreadPercent:0.####}%.", spread, entryDrift);
         if (entryDrift > config.MaxEntryDriftPercent)
             return Fail("ENTRY_DRIFT", $"Giá lệch vùng vào {entryDrift:0.####}% > {config.MaxEntryDriftPercent:0.####}%.", spread, entryDrift);
-        if (context.CurrentBotMargin + context.OrderNotional <= 0m)
-            return Fail("INVALID_CAPITAL", "Giá trị vốn không hợp lệ.", spread, entryDrift);
-        if (context.CurrentBotMargin + context.OrderNotional > config.MaxBotMarginUsdt)
+        if (context.OrderMargin <= 0m || context.OrderNotional <= 0m)
+            return Fail("INVALID_CAPITAL", "Margin hoặc notional lệnh không hợp lệ.", spread, entryDrift);
+        if (context.CurrentBotMargin + context.OrderMargin > config.MaxBotMarginUsdt)
             return Fail("MAX_BOT_MARGIN", $"Bot margin sau lệnh vượt {config.MaxBotMarginUsdt:0.##} USDT.", spread, entryDrift);
         if (context.CurrentBotNotional + context.OrderNotional > config.MaxBotNotionalUsdt)
             return Fail("MAX_BOT_NOTIONAL", $"Bot notional sau lệnh vượt {config.MaxBotNotionalUsdt:0.##} USDT.", spread, entryDrift);

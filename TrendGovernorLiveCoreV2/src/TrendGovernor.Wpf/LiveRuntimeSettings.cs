@@ -1,4 +1,3 @@
-using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 
@@ -7,13 +6,19 @@ namespace TrendGovernor.Wpf;
 public sealed partial class MainWindow
 {
     private readonly TextBox _maxBotPositions = Input("5");
-    private readonly TextBlock _lastEntryBlocker = T("GATE CUỐI: CHƯA QUÉT", 12, Brushes.Gold, true);
+    private readonly List<TextBlock> _entryBlockerViews = [];
 
-    public void InitializeLiveRuntimeSettingsUi()
+    private TextBlock _lastEntryBlocker
     {
-        // Controls are declared directly in BuildSettingsWorkspace().
-        // Dynamic insertion was removed so the settings layout has one stable source.
+        get
+        {
+            var view = T("GATE CUỐI: CHƯA QUÉT", 12, Brushes.Gold, true);
+            _entryBlockerViews.Add(view);
+            return view;
+        }
     }
+
+    public void InitializeLiveRuntimeSettingsUi() { }
 
     private int CurrentSessionBotPositionCount()
         => _state.Positions.Count(position => SessionOwnershipRegistry.IsCurrentSessionBotOwned(position.Symbol));
@@ -21,8 +26,11 @@ public sealed partial class MainWindow
     private void SetEntryBlocker(string code, string detail, Brush? color = null)
     {
         var text = $"GATE CUỐI: {code} — {detail}";
-        _lastEntryBlocker.Text = text;
-        _lastEntryBlocker.Foreground = color ?? Brushes.Gold;
+        foreach (var view in _entryBlockerViews)
+        {
+            view.Text = text;
+            view.Foreground = color ?? Brushes.Gold;
+        }
         SetStatus(text, color ?? Brushes.Gold);
     }
 }

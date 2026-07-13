@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 
 namespace TrendGovernor.Wpf;
@@ -31,7 +32,7 @@ public sealed partial class MainWindow
 
     private void InstallPack16Panels()
     {
-        var tabs = FindVisualChildren<TabControl>(this).FirstOrDefault();
+        var tabs = VisualChildren<TabControl>(this).FirstOrDefault();
         if (tabs is null) return;
 
         var settings = tabs.Items.OfType<TabItem>()

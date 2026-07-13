@@ -1,8 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
-using System.Windows.Data;
-using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Threading;
 
@@ -10,9 +8,21 @@ namespace TrendGovernor.Wpf;
 
 public sealed partial class MainWindow
 {
+    private bool _gridHeaderThemeApplied;
+
     internal void InitializeHardGridHeaderTheme()
     {
-        Loaded += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(ApplyHardGridHeaderTheme));
+        Loaded += (_, _) =>
+        {
+            Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(ApplyHardGridHeaderTheme));
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
+            timer.Tick += (_, _) =>
+            {
+                timer.Stop();
+                ApplyHardGridHeaderTheme();
+            };
+            timer.Start();
+        };
     }
 
     private void ApplyHardGridHeaderTheme()
@@ -21,23 +31,36 @@ public sealed partial class MainWindow
         {
             grid.HeadersVisibility = DataGridHeadersVisibility.Column;
             grid.RowHeaderWidth = 0;
-            grid.ColumnHeaderHeight = 34;
-            grid.Background = B("#071421");
+            grid.ColumnHeaderHeight = 40;
+            grid.Background = B("#06111D");
             grid.Foreground = B("#EAF4FF");
-            grid.BorderBrush = B("#21445F");
-            grid.HorizontalGridLinesBrush = B("#21445F");
-            grid.VerticalGridLinesBrush = B("#21445F");
+            grid.BorderBrush = B("#1D3B55");
+            grid.HorizontalGridLinesBrush = B("#17344D");
+            grid.VerticalGridLinesBrush = B("#17344D");
             grid.GridLinesVisibility = DataGridGridLinesVisibility.All;
-            grid.ColumnHeaderStyle = CreateHardDarkHeaderStyle();
+            grid.ColumnHeaderStyle = CreateProfessionalHeaderStyle();
+            grid.AlternationCount = 2;
+
+            foreach (var column in grid.Columns)
+            {
+                if (column.Header is Border) continue;
+                var title = Convert.ToString(column.Header)?.Trim();
+                if (string.IsNullOrWhiteSpace(title)) title = "—";
+                column.Header = CreateHeaderContent(title);
+            }
 
             var rowStyle = new Style(typeof(DataGridRow));
             rowStyle.Setters.Add(new Setter(Control.ForegroundProperty, B("#EAF4FF")));
-            rowStyle.Setters.Add(new Setter(Control.BackgroundProperty, B("#091827")));
+            rowStyle.Setters.Add(new Setter(Control.BackgroundProperty, B("#071421")));
+            rowStyle.Setters.Add(new Setter(Control.BorderBrushProperty, B("#17344D")));
+            rowStyle.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(0, 0, 0, 1)));
+
             var alternate = new Trigger { Property = ItemsControl.AlternationIndexProperty, Value = 1 };
-            alternate.Setters.Add(new Setter(Control.BackgroundProperty, B("#0D2236")));
+            alternate.Setters.Add(new Setter(Control.BackgroundProperty, B("#0B1C2F")));
             rowStyle.Triggers.Add(alternate);
+
             var selected = new Trigger { Property = DataGridRow.IsSelectedProperty, Value = true };
-            selected.Setters.Add(new Setter(Control.BackgroundProperty, B("#1E5A8A")));
+            selected.Setters.Add(new Setter(Control.BackgroundProperty, B("#184C75")));
             selected.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
             rowStyle.Triggers.Add(selected);
             grid.RowStyle = rowStyle;
@@ -46,45 +69,68 @@ public sealed partial class MainWindow
             cellStyle.Setters.Add(new Setter(Control.ForegroundProperty, B("#EAF4FF")));
             cellStyle.Setters.Add(new Setter(Control.BackgroundProperty, Brushes.Transparent));
             cellStyle.Setters.Add(new Setter(Control.BorderBrushProperty, B("#17344D")));
-            cellStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(6, 2, 6, 2)));
+            cellStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(7, 3, 7, 3)));
+            cellStyle.Setters.Add(new Setter(Control.VerticalContentAlignmentProperty, VerticalAlignment.Center));
             grid.CellStyle = cellStyle;
         }
+
+        _gridHeaderThemeApplied = true;
     }
 
-    private static Style CreateHardDarkHeaderStyle()
+    private static Border CreateHeaderContent(string title)
+    {
+        var text = new TextBlock
+        {
+            Text = title,
+            Foreground = Brushes.White,
+            FontWeight = FontWeights.Bold,
+            FontSize = 11.5,
+            TextAlignment = TextAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(4, 0, 4, 0)
+        };
+
+        var accent = new Border
+        {
+            Height = 2,
+            Background = B("#F0A23A"),
+            VerticalAlignment = VerticalAlignment.Bottom,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+
+        var layout = new Grid();
+        layout.Children.Add(text);
+        layout.Children.Add(accent);
+
+        return new Border
+        {
+            Background = B("#102A40"),
+            BorderBrush = B("#2B5574"),
+            BorderThickness = new Thickness(0, 0, 1, 1),
+            Padding = new Thickness(4, 5, 4, 5),
+            Child = layout,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch
+        };
+    }
+
+    private static Style CreateProfessionalHeaderStyle()
     {
         var style = new Style(typeof(DataGridColumnHeader));
-        style.Setters.Add(new Setter(Control.BackgroundProperty, B("#14324A")));
+        style.Setters.Add(new Setter(Control.BackgroundProperty, B("#102A40")));
         style.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
         style.Setters.Add(new Setter(Control.BorderBrushProperty, B("#2B5574")));
-        style.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(0, 0, 1, 1)));
-        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(8, 5, 8, 5)));
+        style.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(0)));
+        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(0)));
         style.Setters.Add(new Setter(Control.FontWeightProperty, FontWeights.Bold));
-        style.Setters.Add(new Setter(Control.FontSizeProperty, 11d));
-        style.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Center));
-        style.Setters.Add(new Setter(Control.VerticalContentAlignmentProperty, VerticalAlignment.Center));
+        style.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
+        style.Setters.Add(new Setter(Control.VerticalContentAlignmentProperty, VerticalAlignment.Stretch));
 
-        var border = new FrameworkElementFactory(typeof(Border));
-        border.SetValue(Border.BackgroundProperty, B("#14324A"));
-        border.SetValue(Border.BorderBrushProperty, B("#2B5574"));
-        border.SetValue(Border.BorderThicknessProperty, new Thickness(0, 0, 1, 1));
-        border.SetValue(Border.PaddingProperty, new Thickness(8, 5, 8, 5));
-
-        var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
-        presenter.SetBinding(ContentPresenter.ContentProperty, new Binding("Content")
-        {
-            RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent)
-        });
-        presenter.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
-        presenter.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
-        presenter.SetValue(TextElement.ForegroundProperty, Brushes.White);
-        presenter.SetValue(TextElement.FontWeightProperty, FontWeights.Bold);
-        border.AppendChild(presenter);
-
-        style.Setters.Add(new Setter(Control.TemplateProperty, new ControlTemplate(typeof(DataGridColumnHeader))
-        {
-            VisualTree = border
-        }));
+        var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+        hover.Setters.Add(new Setter(Control.BackgroundProperty, B("#173E5E")));
+        style.Triggers.Add(hover);
         return style;
     }
 }

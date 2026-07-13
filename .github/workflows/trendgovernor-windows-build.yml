@@ -1,0 +1,137 @@
+name: TrendGovernor Windows Pack 16 Benchmark Hardening
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'TrendGovernorLiveCoreV2/**'
+      - '.github/workflows/trendgovernor-windows-build.yml'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore 'TrendGovernorLiveCoreV2/src/TrendGovernor.Wpf/TrendGovernor.Wpf.csproj' -r win-x64 --verbosity quiet
+
+      - name: Build
+        shell: pwsh
+        run: |
+          $project = 'TrendGovernorLiveCoreV2/src/TrendGovernor.Wpf/TrendGovernor.Wpf.csproj'
+          dotnet build $project -c Release -r win-x64 --no-restore --verbosity minimal 2>&1 | Tee-Object -FilePath build.log
+          exit $LASTEXITCODE
+
+      - name: Upload build diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TRENDGOVERNOR_PACK_16_DIAGNOSTIC
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 3
+
+      - name: Publish Windows x64
+        shell: pwsh
+        run: dotnet publish 'TrendGovernorLiveCoreV2/src/TrendGovernor.Wpf/TrendGovernor.Wpf.csproj' -c Release -r win-x64 --self-contained true --no-restore -o 'TrendGovernorLiveCoreV2/release' /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true --verbosity quiet
+
+      - name: Verify executable
+        shell: pwsh
+        run: |
+          $exe = 'TrendGovernorLiveCoreV2/release/TrendGovernor.Wpf.exe'
+          if (-not (Test-Path $exe)) { throw 'TrendGovernor.Wpf.exe was not produced.' }
+          $file = Get-Item $exe
+          if ($file.Length -lt 1000000) { throw "Executable is unexpectedly small: $($file.Length) bytes" }
+          Get-FileHash $exe -Algorithm SHA256 | Format-List
+
+      - name: Startup smoke test with crash-log gate
+        shell: pwsh
+        run: |
+          $release = Resolve-Path 'TrendGovernorLiveCoreV2/release'
+          $exe = Join-Path $release 'TrendGovernor.Wpf.exe'
+          $logs = Join-Path $release 'logs'
+          $crashLog = Join-Path $logs 'startup-crash.log'
+          New-Item -ItemType Directory -Path $logs -Force | Out-Null
+          if (Test-Path $crashLog) { Remove-Item $crashLog -Force }
+          $process = Start-Process -FilePath $exe -WorkingDirectory $release -PassThru
+          Start-Sleep -Seconds 25
+          $process.Refresh()
+          if (Test-Path $crashLog) {
+            $content = Get-Content $crashLog -Raw
+            Write-Host $content
+            if ($content -match 'STARTUP_FATAL|UI_FATAL|UNHANDLED') {
+              if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+              throw 'WPF startup smoke test failed: fatal startup log detected.'
+            }
+          }
+          if ($process.HasExited) { throw "WPF startup smoke test failed: process exited early with code $($process.ExitCode)." }
+          Stop-Process -Id $process.Id -Force
+          Write-Host 'WPF startup smoke test PASS.'
+
+      - name: Verify Pack 16 source gates
+        shell: pwsh
+        run: |
+          $root = 'TrendGovernorLiveCoreV2/src/TrendGovernor.Wpf'
+          $required = @(
+            'Core/RadarUniverseSelector.cs',
+            'Core/CandidateLifecycleStore.cs',
+            'Core/Pack14Runtime.cs',
+            'Core/TradeVerificationService.cs',
+            'Core/SessionEventJournal.cs',
+            'Core/AnalysisBundleExporter.cs',
+            'Pack16/Pack16RiskPolicy.cs',
+            'Pack16/Pack16ExchangeVerifier.cs',
+            'Pack16/ProfitRetentionEngine.cs',
+            'Pack16/RadarDiagnostics.cs',
+            'Pack16/Pack16RuntimeIntegration.cs',
+            'SessionOwnershipRegistry.cs'
+          )
+          foreach ($file in $required) {
+            if (-not (Test-Path (Join-Path $root $file))) { throw "Missing Pack 16 source: $file" }
+          }
+          $orchestrator = Get-Content (Join-Path $root 'AutoTradingOrchestrator.cs') -Raw
+          foreach ($token in @('FinalPreSubmitCheckAsync','SessionOwnershipRegistry','CompensateUnprotectedFillAsync','_profitRetention')) {
+            if ($orchestrator -notmatch [regex]::Escape($token)) { throw "Pack 16 orchestrator token missing: $token" }
+          }
+          if ($orchestrator -match '_stableCandidateCycles') { throw 'Legacy stable-cycle dictionary still exists.' }
+          if ($orchestrator -match 'accountIsOneWay:\s*true|isolatedReady:\s*true') { throw 'Hard-coded exchange verification still exists.' }
+          $pack16 = Get-Content (Join-Path $root 'Pack16/Pack16RuntimeIntegration.cs') -Raw
+          foreach ($token in @('Pack16RiskPolicy','ProfitRetentionEngine','MaxBotMarginUsdt','MaxBotNotionalUsdt','MaxExposurePercentOfEquity','MaxSpreadPercent','MaxEntryDriftPercent')) {
+            if ($pack16 -notmatch [regex]::Escape($token)) { throw "Pack 16 integration token missing: $token" }
+          }
+          Write-Host 'Pack 16 source gates PASS.'
+
+      - name: Package release
+        shell: pwsh
+        run: |
+          Copy-Item 'TrendGovernorLiveCoreV2/START_TOOL.cmd' 'TrendGovernorLiveCoreV2/release/START_TOOL.cmd' -Force
+          Copy-Item 'TrendGovernorLiveCoreV2/SAVE_API_ONCE.ps1' 'TrendGovernorLiveCoreV2/release/SAVE_API_ONCE.ps1' -Force
+          Copy-Item 'TrendGovernorLiveCoreV2/README_FIRST.txt' 'TrendGovernorLiveCoreV2/release/README_FIRST.txt' -Force
+          if (Test-Path 'TrendGovernorLiveCoreV2/RELEASE_REPORT_PACK_16.md') {
+            Copy-Item 'TrendGovernorLiveCoreV2/RELEASE_REPORT_PACK_16.md' 'TrendGovernorLiveCoreV2/release/RELEASE_REPORT_PACK_16.md' -Force
+          }
+          New-Item -ItemType Directory -Path 'TrendGovernorLiveCoreV2/release/logs' -Force | Out-Null
+          New-Item -ItemType Directory -Path 'TrendGovernorLiveCoreV2/release/analysis' -Force | Out-Null
+          $zip = 'TRENDGOVERNOR_WINDOWS_X64_PACK_16_BENCHMARK_HARDENING.zip'
+          Compress-Archive -Path 'TrendGovernorLiveCoreV2/release/*' -DestinationPath $zip -Force
+          Get-FileHash $zip -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $zip" } | Set-Content "$zip.sha256"
+
+      - name: Upload Windows release
+        uses: actions/upload-artifact@v4
+        with:
+          name: TRENDGOVERNOR_WINDOWS_X64_PACK_16_BENCHMARK_HARDENING
+          path: |
+            TRENDGOVERNOR_WINDOWS_X64_PACK_16_BENCHMARK_HARDENING.zip
+            TRENDGOVERNOR_WINDOWS_X64_PACK_16_BENCHMARK_HARDENING.zip.sha256
+          if-no-files-found: error
+          retention-days: 30

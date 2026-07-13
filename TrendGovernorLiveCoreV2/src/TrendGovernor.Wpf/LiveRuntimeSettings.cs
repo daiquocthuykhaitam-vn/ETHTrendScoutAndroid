@@ -11,19 +11,8 @@ public sealed partial class MainWindow
 
     public void InitializeLiveRuntimeSettingsUi()
     {
-        Loaded += (_, _) =>
-        {
-            var form = FindParent<StackPanel>(_leverage);
-            if (form is null || form.Children.Contains(_maxBotPositions)) return;
-
-            var leverageIndex = form.Children.IndexOf(_leverage);
-            var insertIndex = Math.Min(form.Children.Count, leverageIndex + 1);
-            form.Children.Insert(insertIndex++, Label("SỐ VỊ THẾ BOT TỐI ĐA"));
-            form.Children.Insert(insertIndex++, _maxBotPositions);
-
-            var blockerCard = Card("GATE CHẶN LỆNH GẦN NHẤT", _lastEntryBlocker);
-            form.Children.Insert(Math.Min(form.Children.Count, insertIndex), blockerCard);
-        };
+        // Controls are declared directly in BuildSettingsWorkspace().
+        // Dynamic insertion was removed so the settings layout has one stable source.
     }
 
     private int CurrentSessionBotPositionCount()
@@ -35,16 +24,5 @@ public sealed partial class MainWindow
         _lastEntryBlocker.Text = text;
         _lastEntryBlocker.Foreground = color ?? Brushes.Gold;
         SetStatus(text, color ?? Brushes.Gold);
-    }
-
-    private static T? FindParent<T>(DependencyObject child) where T : DependencyObject
-    {
-        var current = child;
-        while (current is not null)
-        {
-            current = VisualTreeHelper.GetParent(current);
-            if (current is T match) return match;
-        }
-        return null;
     }
 }

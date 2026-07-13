@@ -11,7 +11,7 @@ public sealed record BookTickerSnapshot(string Symbol, decimal BidPrice, decimal
     public decimal SpreadPercent => AskPrice > 0m && BidPrice > 0m
         ? Math.Max(0m, (AskPrice - BidPrice) / AskPrice * 100m)
         : decimal.MaxValue;
-};
+}
 
 public sealed class Pack16ExchangeVerifier : IDisposable
 {
@@ -50,22 +50,33 @@ public sealed class Pack16ExchangeVerifier : IDisposable
         {
             ["symbol"] = symbol
         }, ct);
-        var rows = document.RootElement.ValueKind == JsonValueKind.Array
-            ? document.RootElement.EnumerateArray()
-            : new[] { document.RootElement }.AsEnumerable();
-        foreach (var row in rows)
+
+        if (document.RootElement.ValueKind == JsonValueKind.Array)
         {
-            if (row.TryGetProperty("symbol", out var s) &&
-                !string.Equals(s.GetString(), symbol, StringComparison.OrdinalIgnoreCase)) continue;
-            if (row.TryGetProperty("isolated", out var isolated))
+            foreach (var row in document.RootElement.EnumerateArray())
             {
-                if (isolated.ValueKind == JsonValueKind.True) return true;
-                if (isolated.ValueKind == JsonValueKind.String && bool.TryParse(isolated.GetString(), out var parsed)) return parsed;
+                var result = ReadIsolated(row, symbol);
+                if (result.HasValue) return result.Value;
             }
-            if (row.TryGetProperty("marginType", out var marginType))
-                return string.Equals(marginType.GetString(), "isolated", StringComparison.OrdinalIgnoreCase);
+            return false;
         }
-        return false;
+
+        return ReadIsolated(document.RootElement, symbol) ?? false;
+    }
+
+    private static bool? ReadIsolated(JsonElement row, string symbol)
+    {
+        if (row.TryGetProperty("symbol", out var s) &&
+            !string.Equals(s.GetString(), symbol, StringComparison.OrdinalIgnoreCase)) return null;
+
+        if (row.TryGetProperty("isolated", out var isolated))
+        {
+            if (isolated.ValueKind is JsonValueKind.True or JsonValueKind.False) return isolated.GetBoolean();
+            if (isolated.ValueKind == JsonValueKind.String && bool.TryParse(isolated.GetString(), out var parsed)) return parsed;
+        }
+        if (row.TryGetProperty("marginType", out var marginType))
+            return string.Equals(marginType.GetString(), "isolated", StringComparison.OrdinalIgnoreCase);
+        return null;
     }
 
     private async Task<JsonDocument> SignedAsync(HttpMethod method, string path, Dictionary<string, string> parameters, CancellationToken ct)

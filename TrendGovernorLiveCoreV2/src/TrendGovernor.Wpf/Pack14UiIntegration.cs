@@ -1,18 +1,35 @@
 using System.Windows.Controls;
-using System.Windows.Data;
 
 namespace TrendGovernor.Wpf;
 
 public sealed partial class MainWindow
 {
-    private readonly DataGrid _lifecycleGrid = LifecycleGrid();
-    private readonly DataGrid _verifyMatrixGrid = VerifyMatrixGrid();
+    private readonly List<DataGrid> _lifecycleViews = [];
+    private readonly List<DataGrid> _verifyViews = [];
 
-    public void InitializePack14Ui()
+    private DataGrid _lifecycleGrid
     {
-        _lifecycleGrid.ItemsSource = _state.Lifecycle;
-        _verifyMatrixGrid.ItemsSource = _state.VerifyMatrix;
+        get
+        {
+            var grid = LifecycleGrid();
+            grid.ItemsSource = _state.Lifecycle;
+            _lifecycleViews.Add(grid);
+            return grid;
+        }
     }
+
+    private DataGrid _verifyMatrixGrid
+    {
+        get
+        {
+            var grid = VerifyMatrixGrid();
+            grid.ItemsSource = _state.VerifyMatrix;
+            _verifyViews.Add(grid);
+            return grid;
+        }
+    }
+
+    public void InitializePack14Ui() { }
 
     private static DataGrid LifecycleGrid()
     {
@@ -44,8 +61,8 @@ public sealed partial class MainWindow
     {
         Dispatcher.Invoke(() =>
         {
-            _lifecycleGrid.Items.Refresh();
-            _verifyMatrixGrid.Items.Refresh();
+            foreach (var grid in _lifecycleViews) grid.Items.Refresh();
+            foreach (var grid in _verifyViews) grid.Items.Refresh();
         });
     }
 }

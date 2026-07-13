@@ -1,7 +1,5 @@
-using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
-using System.Windows.Media;
 
 namespace TrendGovernor.Wpf;
 
@@ -12,54 +10,8 @@ public sealed partial class MainWindow
 
     public void InitializePack14Ui()
     {
-        Loaded += (_, _) =>
-        {
-            _lifecycleGrid.ItemsSource = _state.Lifecycle;
-            _verifyMatrixGrid.ItemsSource = _state.VerifyMatrix;
-            AddUniverseColumns(_marketGrid, compact: true);
-            AddUniverseColumns(_radarGrid, compact: false);
-
-            var tabs = FindDescendant<TabControl>(this);
-            if (tabs is null) return;
-            if (tabs.Items.OfType<TabItem>().Any(x => Equals(x.Tag, "PACK14"))) return;
-            tabs.Items.Insert(Math.Min(4, tabs.Items.Count), new TabItem
-            {
-                Tag = "PACK14",
-                Header = Pack14TabHeader(),
-                Content = Pack14Workspace()
-            });
-        };
-    }
-
-    private static void AddUniverseColumns(DataGrid grid, bool compact)
-    {
-        if (grid.Columns.Any(x => string.Equals(Convert.ToString(x.Header), "HẠNG", StringComparison.OrdinalIgnoreCase))) return;
-        grid.Columns.Insert(0, C("HẠNG", "RadarRank", 52));
-        grid.Columns.Insert(Math.Min(2, grid.Columns.Count), C("NGUỒN CHỌN", "UniverseSource", compact ? 125 : 155));
-        grid.Columns.Insert(Math.Min(3, grid.Columns.Count), C("ĐIỂM U", "UniverseScore", 62));
-        grid.Columns.Insert(Math.Min(4, grid.Columns.Count), C("BIÊN 24H %", "Range24hPercent", 78, "0.0"));
-        grid.Columns.Insert(Math.Min(5, grid.Columns.Count), C("THANH KHOẢN", "LiquidityTier", 78));
-        grid.Columns.Insert(Math.Min(10, grid.Columns.Count), C("GIAI ĐOẠN", "CandidateStage", 125));
-    }
-
-    private UIElement Pack14Workspace()
-    {
-        var root = new Grid { Margin = new Thickness(10) };
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1.15, GridUnitType.Star) });
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1.0, GridUnitType.Star) });
-        root.Children.Add(Card("VÒNG ĐỜI ỨNG VIÊN — RADAR → PLAN → VERIFY → ORDER → FILL → PROTECT → MANAGE", _lifecycleGrid));
-        var verify = Card("MA TRẬN KIỂM ĐỊNH TRƯỚC LỆNH — PASS/BLOCK + LÝ DO", _verifyMatrixGrid);
-        Grid.SetRow(verify, 1);
-        root.Children.Add(verify);
-        return root;
-    }
-
-    private static object Pack14TabHeader()
-    {
-        var header = new StackPanel { Orientation = Orientation.Horizontal };
-        header.Children.Add(T("◫", 14, B("#61A8E8")));
-        header.Children.Add(T("VÒNG ĐỜI LỆNH", 12, Brushes.White, true));
-        return header;
+        _lifecycleGrid.ItemsSource = _state.Lifecycle;
+        _verifyMatrixGrid.ItemsSource = _state.VerifyMatrix;
     }
 
     private static DataGrid LifecycleGrid()
@@ -68,8 +20,8 @@ public sealed partial class MainWindow
         grid.Columns.Add(C("CẶP", "Symbol", 95));
         grid.Columns.Add(C("GIAI ĐOẠN", "Stage", 145));
         grid.Columns.Add(C("ỔN ĐỊNH", "StableCycles", 75));
-        grid.Columns.Add(C("PHIÊN BẢN", "DecisionVersion", 80));
-        grid.Columns.Add(C("LÝ DO", "Reason", 260));
+        grid.Columns.Add(C("PHIÊN BẢN", "DecisionVersion", 82));
+        grid.Columns.Add(C("LÝ DO", "Reason", 300));
         grid.Columns.Add(C("CANDIDATE ID", "CandidateId", 280));
         grid.Columns.Add(C("CẬP NHẬT", "LastSeen", 150, "dd/MM HH:mm:ss"));
         return grid;
@@ -79,25 +31,13 @@ public sealed partial class MainWindow
     {
         var grid = BaseGrid();
         grid.Columns.Add(C("CẶP", "Symbol", 95));
-        grid.Columns.Add(C("ĐIỀU KIỆN", "GateCode", 180));
-        grid.Columns.Add(C("PASS", "Passed", 65));
-        grid.Columns.Add(C("LÝ DO", "Reason", 360));
-        grid.Columns.Add(C("PLAN ID", "PlanId", 240));
-        grid.Columns.Add(C("GRANT ID", "GrantId", 260));
+        grid.Columns.Add(C("ĐIỀU KIỆN", "GateCode", 185));
+        grid.Columns.Add(C("PASS", "Passed", 68));
+        grid.Columns.Add(C("LÝ DO", "Reason", 390));
+        grid.Columns.Add(C("PLAN ID", "PlanId", 245));
+        grid.Columns.Add(C("GRANT ID", "GrantId", 265));
         grid.Columns.Add(C("THỜI GIAN", "IssuedAt", 150, "dd/MM HH:mm:ss"));
         return grid;
-    }
-
-    private static T? FindDescendant<T>(DependencyObject parent) where T : DependencyObject
-    {
-        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
-        {
-            var child = VisualTreeHelper.GetChild(parent, i);
-            if (child is T match) return match;
-            var nested = FindDescendant<T>(child);
-            if (nested is not null) return nested;
-        }
-        return null;
     }
 
     private void RefreshPack14Ui()

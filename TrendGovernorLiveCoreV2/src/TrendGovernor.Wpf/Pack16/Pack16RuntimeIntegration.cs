@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 
@@ -22,7 +23,66 @@ public sealed partial class MainWindow
     private readonly TextBox _maxProfitGiveback = Input("30");
     private readonly TextBlock _radarFunnel = T("RADAR FUNNEL: CHƯA QUÉT", 11.5, B("#9AB4C9"), true);
 
-    internal void InitializePack16() => Closed += (_, _) => _pack16Exchange.Dispose();
+    internal void InitializePack16()
+    {
+        Loaded += (_, _) => InstallPack16Panels();
+        Closed += (_, _) => _pack16Exchange.Dispose();
+    }
+
+    private void InstallPack16Panels()
+    {
+        var tabs = FindVisualChildren<TabControl>(this).FirstOrDefault();
+        if (tabs is null) return;
+
+        var settings = tabs.Items.OfType<TabItem>()
+            .FirstOrDefault(x => ReadTabName(x).Contains("CÀI ĐẶT", StringComparison.OrdinalIgnoreCase));
+        if (settings?.Content is Grid settingsGrid &&
+            settingsGrid.Children.OfType<Border>().All(x => !Equals(x.Tag, "PACK16_CAPITAL")))
+        {
+            settingsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var fields = new UniformGrid { Columns = 4, Margin = new Thickness(6) };
+            AddPack16Field(fields, "TỔNG MARGIN BOT", _maxBotMargin);
+            AddPack16Field(fields, "TỔNG NOTIONAL BOT", _maxBotNotional);
+            AddPack16Field(fields, "EXPOSURE / EQUITY %", _maxExposurePercent);
+            AddPack16Field(fields, "NOTIONAL MỖI CẶP", _maxSymbolNotional);
+            AddPack16Field(fields, "SPREAD TỐI ĐA %", _maxSpreadPercent);
+            AddPack16Field(fields, "ĐỘ LỆCH ENTRY %", _maxEntryDriftPercent);
+            AddPack16Field(fields, "KÍCH HOẠT PROFIT FLOOR", _profitFloorActivation);
+            AddPack16Field(fields, "GIVEBACK TỐI ĐA %", _maxProfitGiveback);
+            var card = Card("PACK 16 • GIỚI HẠN VỐN & GIỮ LỢI NHUẬN", fields);
+            card.Tag = "PACK16_CAPITAL";
+            Grid.SetRow(card, settingsGrid.RowDefinitions.Count - 1);
+            Grid.SetColumnSpan(card, Math.Max(1, settingsGrid.ColumnDefinitions.Count));
+            settingsGrid.Children.Add(card);
+        }
+
+        var radar = tabs.Items.OfType<TabItem>()
+            .FirstOrDefault(x => ReadTabName(x).Equals("RADAR", StringComparison.OrdinalIgnoreCase));
+        if (radar?.Content is Grid radarGrid &&
+            radarGrid.Children.OfType<Border>().All(x => !Equals(x.Tag, "PACK16_FUNNEL")))
+        {
+            radarGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var card = Card("RADAR FUNNEL • UNIVERSE → PHÂN TÍCH → PLAN READY", _radarFunnel);
+            card.Tag = "PACK16_FUNNEL";
+            Grid.SetRow(card, radarGrid.RowDefinitions.Count - 1);
+            radarGrid.Children.Add(card);
+        }
+    }
+
+    private static void AddPack16Field(Panel parent, string label, TextBox input)
+    {
+        var panel = new StackPanel { Margin = new Thickness(6, 2, 6, 2) };
+        panel.Children.Add(Label(label));
+        panel.Children.Add(input);
+        parent.Children.Add(panel);
+    }
+
+    private static string ReadTabName(TabItem item)
+    {
+        if (item.Header is StackPanel panel)
+            return string.Join(" ", panel.Children.OfType<TextBlock>().Select(x => x.Text)).Trim();
+        return item.Header?.ToString() ?? string.Empty;
+    }
 
     private void ReadPack16Settings()
     {
@@ -52,8 +112,7 @@ public sealed partial class MainWindow
         return (margin, notional, symbolRows.Sum(x => Math.Abs(x.MarkPrice * x.Quantity)), symbolRows.Count);
     }
 
-    private async Task<PreSubmitResult> FinalPreSubmitCheckAsync(
-        MarketRow market, FrozenTradePlan plan, decimal orderNotional, CancellationToken ct)
+    private async Task<PreSubmitResult> FinalPreSubmitCheckAsync(MarketRow market, FrozenTradePlan plan, decimal orderNotional, CancellationToken ct)
     {
         var book = await _pack16Exchange.GetBookTickerAsync(market.Symbol, ct);
         var capital = CurrentBotCapital(market.Symbol);
